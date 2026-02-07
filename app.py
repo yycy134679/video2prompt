@@ -47,6 +47,12 @@ def _parse_backoff(value: str) -> list[int]:
     return [int(item) for item in items]
 
 
+def _count_lines(text: str) -> tuple[int, int]:
+    lines = text.splitlines() if text else []
+    non_empty = sum(1 for line in lines if line.strip())
+    return len(lines), non_empty
+
+
 async def _run_scheduler(
     config,
     api_key: str,
@@ -156,21 +162,21 @@ def main() -> None:
         runtime_overrides: dict[str, Any] = {}
         with col1:
             runtime_overrides["parser.concurrency"] = st.number_input(
-                "parser.concurrency",
+                "解析并发数（parser.concurrency）",
                 min_value=1,
                 max_value=5,
                 value=base_config.parser.concurrency,
                 step=1,
             )
             runtime_overrides["batch.size"] = st.number_input(
-                "batch.size",
+                "每批任务数（batch.size）",
                 min_value=50,
                 max_value=200,
                 value=base_config.batch.size,
                 step=10,
             )
             runtime_overrides["gemini.video_fps"] = st.number_input(
-                "gemini.video_fps",
+                "Gemini 视频采样帧率（gemini.video_fps）",
                 min_value=0.1,
                 max_value=20.0,
                 value=float(base_config.gemini.video_fps),
@@ -178,46 +184,46 @@ def main() -> None:
             )
         with col2:
             runtime_overrides["parser.pre_delay_min_seconds"] = st.number_input(
-                "parser.pre_delay_min_seconds",
+                "解析前最小等待秒数（parser.pre_delay_min_seconds）",
                 min_value=0.0,
                 value=float(base_config.parser.pre_delay_min_seconds),
                 step=0.1,
             )
             runtime_overrides["parser.pre_delay_max_seconds"] = st.number_input(
-                "parser.pre_delay_max_seconds",
+                "解析前最大等待秒数（parser.pre_delay_max_seconds）",
                 min_value=0.0,
                 value=float(base_config.parser.pre_delay_max_seconds),
                 step=0.1,
             )
             runtime_overrides["task.completion_delay_min_seconds"] = st.number_input(
-                "task.completion_delay_min_seconds",
+                "任务完成后最小等待秒数（task.completion_delay_min_seconds）",
                 min_value=0.0,
                 value=float(base_config.task.completion_delay_min_seconds),
                 step=0.1,
             )
             runtime_overrides["task.completion_delay_max_seconds"] = st.number_input(
-                "task.completion_delay_max_seconds",
+                "任务完成后最大等待秒数（task.completion_delay_max_seconds）",
                 min_value=0.0,
                 value=float(base_config.task.completion_delay_max_seconds),
                 step=0.1,
             )
         with col3:
             parser_backoff_text = st.text_input(
-                "retry.parser_backoff_seconds",
+                "Parser 重试退避序列（retry.parser_backoff_seconds）",
                 value=",".join(str(x) for x in base_config.retry.parser_backoff_seconds),
             )
             gemini_backoff_text = st.text_input(
-                "retry.gemini_backoff_seconds",
+                "Gemini 重试退避序列（retry.gemini_backoff_seconds）",
                 value=",".join(str(x) for x in base_config.retry.gemini_backoff_seconds),
             )
             runtime_overrides["circuit_breaker.parser.consecutive_failures"] = st.number_input(
-                "circuit_breaker.parser.consecutive_failures",
+                "Parser 连续失败熔断阈值（circuit_breaker.parser.consecutive_failures）",
                 min_value=1,
                 value=base_config.circuit_breaker.parser.consecutive_failures,
                 step=1,
             )
             runtime_overrides["circuit_breaker.gemini.consecutive_failures"] = st.number_input(
-                "circuit_breaker.gemini.consecutive_failures",
+                "Gemini 连续失败熔断阈值（circuit_breaker.gemini.consecutive_failures）",
                 min_value=1,
                 value=base_config.circuit_breaker.gemini.consecutive_failures,
                 step=1,
@@ -225,7 +231,7 @@ def main() -> None:
 
         skip_batch_rest_once = st.checkbox("本次运行跳过下一次批次休息", value=False)
 
-    st.subheader("DEFAULT_USER_PROMPT 配置")
+    st.subheader("视频解析提示词配置")
     default_user_prompt = st.text_area(
         "DEFAULT_USER_PROMPT",
         value=st.session_state["default_user_prompt"],
@@ -239,8 +245,12 @@ def main() -> None:
     left, right = st.columns(2)
     with left:
         pid_text = st.text_area("pid 列表（每行一个）", height=220)
+        pid_total, pid_non_empty = _count_lines(pid_text)
+        st.caption(f"行数：{pid_total}（非空行：{pid_non_empty}）")
     with right:
         link_text = st.text_area("抖音链接列表（每行一个）", height=220)
+        link_total, link_non_empty = _count_lines(link_text)
+        st.caption(f"行数：{link_total}（非空行：{link_non_empty}）")
 
     table_placeholder = st.empty()
     status_placeholder = st.empty()
@@ -297,7 +307,13 @@ def main() -> None:
 
     if st.session_state.get("last_tasks"):
         st.subheader("导出结果")
-        if st.button("导出 Excel"):
+        export_col, tip_col = st.columns([1, 3])
+        with tip_col:
+            st.info("请尽快导出结果查看完整提示词，避免刷新后结果丢失，导出的 Excel 可直接导入 Lumen")
+        with export_col:
+            export_clicked = st.button("导出 Excel")
+
+        if export_clicked:
             restore_tasks = st.session_state["last_tasks"]
             exporter = ExcelExporter(template_path="docs/product_prompt_template.xlsx")
             output_dir = Path("exports")

@@ -1,48 +1,89 @@
+# Gemini 视频理解服务配置
 gemini:
+  # Gemini 中转服务地址
   base_url: "https://api.huandutech.com"
+  # 使用的 Gemini 模型名称
   model: "gemini-3-flash-preview"
+  # 思考强度（minimal/low/medium/high）
   thinking_level: "high"
+  # 媒体分辨率（media_resolution_low/medium/high）
   media_resolution: "media_resolution_medium"
+  # 视频采样帧率（每秒采样帧数）
   video_fps: 2.0
+  # 帧率降级值（主帧率失败后回退）
   fps_fallback: 1.0
+  # Gemini 请求超时时间（秒）
   timeout_seconds: 90
 
+# 抖音解析服务配置
 parser:
+  # 解析服务地址（本地 Docker 服务）
   base_url: "http://localhost:80"
+  # 并发解析任务数（建议 1-5）
   concurrency: 3
+  # 每条任务解析前随机等待最小秒数
   pre_delay_min_seconds: 1.5
+  # 每条任务解析前随机等待最大秒数
   pre_delay_max_seconds: 4.0
+  # 解析请求超时时间（秒）
   timeout_seconds: 30
 
+# 重试与退避配置
 retry:
+  # Parser 重试等待序列（秒）
   parser_backoff_seconds: [10, 30, 120, 300]
+  # Gemini 重试等待序列（秒）
   gemini_backoff_seconds: [5, 15, 60, 180]
+  # Parser 最大退避上限（秒）
   parser_backoff_cap_seconds: 600
+  # Gemini 最大退避上限（秒）
   gemini_backoff_cap_seconds: 300
+  # 退避期间是否暂停全局队列
   pause_global_queue_during_backoff: true
 
+# 熔断器配置
 circuit_breaker:
+  # 失败率统计窗口（秒）
   window_seconds: 300
+  # Parser 熔断阈值
   parser:
+    # 连续失败次数阈值
     consecutive_failures: 8
+    # 窗口失败率阈值（0-1）
     failure_rate: 0.6
+  # Gemini 熔断阈值
   gemini:
+    # 连续失败次数阈值
     consecutive_failures: 5
+    # 窗口失败率阈值（0-1）
     failure_rate: 0.5
 
+# 批处理配置
 batch:
+  # 每批处理任务数
   size: 100
+  # 批间休息最小分钟数
   rest_min_minutes: 5
+  # 批间休息最大分钟数
   rest_max_minutes: 15
 
+# 单任务尾部延时配置
 task:
+  # 任务完成后随机等待最小秒数
   completion_delay_min_seconds: 0.8
+  # 任务完成后随机等待最大秒数
   completion_delay_max_seconds: 2.0
 
+# 缓存配置
 cache:
+  # SQLite 缓存数据库路径
   db_path: "data/cache.db"
+  # 缓存键是否包含提示词哈希
   include_prompt_hash_in_key: true
 
+# 日志配置
 logging:
+  # 日志文件路径
   file_path: "logs/app.log"
+  # 日志级别（DEBUG/INFO/WARNING/ERROR/CRITICAL）
   level: "INFO"
