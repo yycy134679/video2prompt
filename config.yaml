@@ -13,14 +13,14 @@ gemini:
   # 帧率降级值（主帧率失败后回退）
   fps_fallback: 1.0
   # Gemini 请求超时时间（秒）
-  timeout_seconds: 90
+  timeout_seconds: 300
 
 # 抖音解析服务配置
 parser:
   # 解析服务地址（本地 Docker 服务）
   base_url: "http://localhost:80"
   # 并发解析任务数（建议 1-5）
-  concurrency: 3
+  concurrency: 4
   # 每条任务解析前随机等待最小秒数
   pre_delay_min_seconds: 1.5
   # 每条任务解析前随机等待最大秒数

@@ -13,6 +13,8 @@ from .models import Task, TaskState
 class ExcelExporter:
     """基于模板导出 Product ID/Prompt。"""
 
+    DOUYIN_LINK_HEADER = "抖音链接"
+
     def __init__(self, template_path: str = "docs/product_prompt_template.xlsx"):
         self.template_path = template_path
 
@@ -34,6 +36,11 @@ class ExcelExporter:
         if pid_col is None or prompt_col is None:
             raise ValueError("模板缺少 Product ID 或 Prompt 列")
 
+        link_col = headers.get(self.DOUYIN_LINK_HEADER)
+        if link_col is None:
+            link_col = ws.max_column + 1
+            ws.cell(row=1, column=link_col).value = self.DOUYIN_LINK_HEADER
+
         row = 2
         for task in tasks:
             if task.state not in {TaskState.COMPLETED, TaskState.FAILED, TaskState.CANCELLED} and not task.cache_hit:
@@ -42,6 +49,7 @@ class ExcelExporter:
                 continue
             ws.cell(row=row, column=pid_col).value = task.pid
             ws.cell(row=row, column=prompt_col).value = task.gemini_output
+            ws.cell(row=row, column=link_col).value = task.original_link
             row += 1
 
         out = Path(output_path)
