@@ -26,6 +26,7 @@ def _task_to_row(task: Task) -> dict[str, Any]:
     return {
         "pid": task.pid,
         "原始链接": task.original_link,
+        "Gemini视频直链": task.video_url,
         "aweme_id": task.aweme_id,
         "状态": task.state.value,
         "解析重试": task.parse_retries,
@@ -40,6 +41,17 @@ def _task_to_row(task: Task) -> dict[str, Any]:
 
 def _rows(tasks: list[Task]) -> list[dict[str, Any]]:
     return [_task_to_row(task) for task in tasks]
+
+
+def _render_table(table_placeholder, tasks: list[Task]) -> None:
+    table_placeholder.dataframe(
+        _rows(tasks),
+        use_container_width=True,
+        column_config={
+            "原始链接": st.column_config.LinkColumn("原始链接"),
+            "Gemini视频直链": st.column_config.LinkColumn("Gemini视频直链"),
+        },
+    )
 
 
 def _parse_backoff(value: str) -> list[int]:
@@ -108,7 +120,7 @@ async def _run_scheduler(
         skip_event.set()
 
     def on_update(_: Task) -> None:
-        table_placeholder.dataframe(_rows(tasks), use_container_width=True)
+        _render_table(table_placeholder, tasks)
 
     def on_countdown(remain: int) -> None:
         status_placeholder.info(f"批次休息中，剩余 {remain}s（已支持跳过下一段休息）")
@@ -285,7 +297,7 @@ def main() -> None:
             st.error(f"运行时配置无效: {exc}")
             st.stop()
 
-        table_placeholder.dataframe(_rows(tasks), use_container_width=True)
+        _render_table(table_placeholder, tasks)
         status_placeholder.info("任务执行中...")
 
         asyncio.run(
