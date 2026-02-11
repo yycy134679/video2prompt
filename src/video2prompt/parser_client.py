@@ -68,7 +68,7 @@ class ParserClient:
 
     def select_video_url(self, video_data: dict[str, Any]) -> str:
         bit_rate_list = video_data.get("bit_rate")
-        candidates: list[tuple[int, str]] = []
+        candidates: list[tuple[int, int, str]] = []
 
         if isinstance(bit_rate_list, list):
             for item in bit_rate_list:
@@ -90,15 +90,20 @@ class ParserClient:
                 url_list = play_addr.get("url_list") if isinstance(play_addr.get("url_list"), list) else []
                 if not url_list:
                     continue
+                candidate_url = self._pick_preferred_url_from_list(url_list)
+                if not candidate_url:
+                    continue
                 try:
                     bitrate = int(item.get("bit_rate", 0))
                 except (TypeError, ValueError):
                     bitrate = 0
-                candidates.append((bitrate, str(url_list[0])))
+                domain_priority = self._url_domain_priority(candidate_url)
+                candidates.append((domain_priority, bitrate, candidate_url))
 
         if candidates:
-            candidates.sort(key=lambda x: x[0], reverse=True)
-            return candidates[0][1]
+            # 优先选更稳定域名（如 v95），其次再按码率降序选择。
+            candidates.sort(key=lambda x: (x[0], x[1]), reverse=True)
+            return candidates[0][2]
 
         fallback_h264 = self._pick_url(video_data.get("play_addr_h264"))
         if fallback_h264:
@@ -115,9 +120,38 @@ class ParserClient:
         if not isinstance(node, dict):
             return None
         url_list = node.get("url_list")
-        if isinstance(url_list, list) and url_list:
-            return str(url_list[0])
+        if isinstance(url_list, list):
+            return ParserClient._pick_preferred_url_from_list(url_list)
         return None
+
+    @staticmethod
+    def _pick_preferred_url_from_list(url_list: list[Any]) -> str | None:
+        urls = [str(item) for item in url_list if isinstance(item, str) and item.strip()]
+        if not urls:
+            return None
+
+        # 你的场景里 v26 容易 403，优先选择 v95 直链。
+        for url in urls:
+            lowered = url.lower()
+            if "v95-" in lowered or "v95." in lowered:
+                return url
+
+        for url in urls:
+            lowered = url.lower()
+            if "v26-" in lowered or "v26." in lowered:
+                continue
+            return url
+
+        return urls[0]
+
+    @staticmethod
+    def _url_domain_priority(url: str) -> int:
+        lowered = (url or "").lower()
+        if "v95-" in lowered or "v95." in lowered:
+            return 2
+        if "v26-" in lowered or "v26." in lowered:
+            return 0
+        return 1
 
     async def health_check(self) -> tuple[bool, str]:
         """检查解析服务可达性。"""

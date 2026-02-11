@@ -13,7 +13,7 @@ class TaskState(str, Enum):
     WAITING = "等待中"
     PARSING = "解析中"
     INTERVAL = "等待间隔"
-    INTERPRETING = "Gemini解读中"
+    INTERPRETING = "模型解读中"
     COMPLETED = "完成"
     FAILED = "失败"
     CIRCUIT_BREAK = "熔断停止"
@@ -28,6 +28,14 @@ class GeminiConfig:
     media_resolution: str = "media_resolution_medium"
     video_fps: float = 2.0
     fps_fallback: float = 1.0
+    timeout_seconds: int = 90
+
+
+@dataclass
+class VolcengineConfig:
+    base_url: str = "https://ark.cn-beijing.volces.com/api/v3"
+    endpoint_id: str = ""
+    target_model: str = "doubao-seed-1-8-251228"
     timeout_seconds: int = 90
 
 
@@ -93,7 +101,9 @@ class LoggingConfig:
 
 @dataclass
 class AppConfig:
+    provider: str = "gemini"
     gemini: GeminiConfig = field(default_factory=GeminiConfig)
+    volcengine: VolcengineConfig = field(default_factory=VolcengineConfig)
     parser: ParserConfig = field(default_factory=ParserConfig)
     retry: RetryConfig = field(default_factory=RetryConfig)
     circuit_breaker: CircuitBreakerConfig = field(default_factory=CircuitBreakerConfig)

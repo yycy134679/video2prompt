@@ -13,12 +13,21 @@ class SecretMaskFilter(logging.Filter):
 
     def __init__(self) -> None:
         super().__init__()
-        api_key = os.getenv("GEMINI_API_KEY", "")
-        self._tokens = [token for token in [api_key] if token]
+        self._tokens = [
+            token
+            for token in [
+                os.getenv("GEMINI_API_KEY", ""),
+                os.getenv("VOLCENGINE_API_KEY", ""),
+                os.getenv("ARK_API_KEY", ""),
+            ]
+            if token
+        ]
         self._patterns = [
             re.compile(r"(Authorization\s*:\s*Bearer\s+)([^\s]+)", re.IGNORECASE),
             re.compile(r"(\"Authorization\"\s*:\s*\"Bearer\s+)([^\"]+)(\")", re.IGNORECASE),
             re.compile(r"(GEMINI_API_KEY\s*=\s*)([^\s]+)", re.IGNORECASE),
+            re.compile(r"(VOLCENGINE_API_KEY\s*=\s*)([^\s]+)", re.IGNORECASE),
+            re.compile(r"(ARK_API_KEY\s*=\s*)([^\s]+)", re.IGNORECASE),
         ]
 
     def filter(self, record: logging.LogRecord) -> bool:

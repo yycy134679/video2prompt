@@ -20,21 +20,22 @@ from video2prompt.models import Task, TaskInput
 from video2prompt.parser_client import ParserClient
 from video2prompt.task_scheduler import TaskScheduler
 from video2prompt.validator import InputValidator
+from video2prompt.volcengine_client import VolcengineClient
 
 
 def _task_to_row(task: Task) -> dict[str, Any]:
     return {
         "pid": task.pid,
         "原始链接": task.original_link,
-        "Gemini视频直链": task.video_url,
+        "视频直链": task.video_url,
         "aweme_id": task.aweme_id,
         "状态": task.state.value,
         "解析重试": task.parse_retries,
-        "Gemini重试": task.gemini_retries,
+        "模型重试": task.gemini_retries,
         "耗时(s)": round(task.duration_seconds, 2),
         "FPS": task.fps_used,
         "错误": task.error_message,
-        "输出预览": task.gemini_output[:120],
+        "模型输出预览": task.gemini_output[:120],
         "缓存命中": task.cache_hit,
     }
 
@@ -46,10 +47,10 @@ def _rows(tasks: list[Task]) -> list[dict[str, Any]]:
 def _render_table(table_placeholder, tasks: list[Task]) -> None:
     table_placeholder.dataframe(
         _rows(tasks),
-        use_container_width=True,
+        width="stretch",
         column_config={
             "原始链接": st.column_config.LinkColumn("原始链接"),
-            "Gemini视频直链": st.column_config.LinkColumn("Gemini视频直链"),
+            "视频直链": st.column_config.LinkColumn("视频直链"),
         },
     )
 
@@ -76,22 +77,35 @@ async def _run_scheduler(
     skip_batch_rest_once: bool,
 ):
     parser_http = httpx.AsyncClient(timeout=config.parser.timeout_seconds)
-    gemini_http = httpx.AsyncClient(timeout=config.gemini.timeout_seconds)
+    model_timeout = config.gemini.timeout_seconds if config.provider == "gemini" else config.volcengine.timeout_seconds
+    model_http = httpx.AsyncClient(timeout=model_timeout)
 
     parser_client = ParserClient(
         base_url=config.parser.base_url,
         timeout_seconds=config.parser.timeout_seconds,
         http_client=parser_http,
     )
-    gemini_client = GeminiClient(
-        base_url=config.gemini.base_url,
-        model=config.gemini.model,
-        api_key=api_key,
-        timeout_seconds=config.gemini.timeout_seconds,
-        thinking_level=config.gemini.thinking_level,
-        media_resolution=config.gemini.media_resolution,
-        http_client=gemini_http,
-    )
+    if config.provider == "gemini":
+        model_client = GeminiClient(
+            base_url=config.gemini.base_url,
+            model=config.gemini.model,
+            api_key=api_key,
+            timeout_seconds=config.gemini.timeout_seconds,
+            thinking_level=config.gemini.thinking_level,
+            media_resolution=config.gemini.media_resolution,
+            http_client=model_http,
+        )
+    elif config.provider == "volcengine":
+        model_client = VolcengineClient(
+            base_url=config.volcengine.base_url,
+            endpoint_id=config.volcengine.endpoint_id,
+            target_model=config.volcengine.target_model,
+            api_key=api_key,
+            timeout_seconds=config.volcengine.timeout_seconds,
+            http_client=model_http,
+        )
+    else:
+        raise ConfigError(f"不支持的 provider: {config.provider}")
 
     parser_breaker = CircuitBreaker(
         consecutive_threshold=config.circuit_breaker.parser.consecutive_failures,
@@ -106,7 +120,7 @@ async def _run_scheduler(
 
     scheduler = TaskScheduler(
         parser=parser_client,
-        gemini=gemini_client,
+        model_client=model_client,
         cache=cache,
         config=config,
         parser_breaker=parser_breaker,
@@ -136,7 +150,7 @@ async def _run_scheduler(
         )
     finally:
         await parser_http.aclose()
-        await gemini_http.aclose()
+        await model_http.aclose()
 
 
 def main() -> None:
@@ -146,7 +160,7 @@ def main() -> None:
     try:
         config_manager = ConfigManager(env_path=".env", config_path="config.yaml")
         base_config = config_manager.get_config()
-        api_key = config_manager.get_gemini_api_key()
+        api_key = config_manager.get_provider_api_key()
     except ConfigError as exc:
         st.error(f"配置错误: {exc}")
         st.stop()
@@ -160,6 +174,14 @@ def main() -> None:
     if "default_user_prompt" not in st.session_state:
         saved_prompt = asyncio.run(cache.load_system_prompt())
         st.session_state["default_user_prompt"] = saved_prompt or "请基于视频内容生成高质量 Sora 提示词，中文输出。"
+
+    if base_config.provider == "gemini":
+        st.caption(f"当前模型服务商：gemini（model={base_config.gemini.model}）")
+    else:
+        st.caption(
+            "当前模型服务商：volcengine "
+            f"（endpoint_id={base_config.volcengine.endpoint_id}，target_model={base_config.volcengine.target_model}）"
+        )
 
     with st.expander("服务状态", expanded=True):
         checker = ParserClient(base_url=base_config.parser.base_url, timeout_seconds=5)
@@ -187,13 +209,16 @@ def main() -> None:
                 value=base_config.batch.size,
                 step=10,
             )
-            runtime_overrides["gemini.video_fps"] = st.number_input(
-                "Gemini 视频采样帧率（gemini.video_fps）",
-                min_value=0.1,
-                max_value=20.0,
-                value=float(base_config.gemini.video_fps),
-                step=0.1,
-            )
+            if base_config.provider == "gemini":
+                runtime_overrides["gemini.video_fps"] = st.number_input(
+                    "模型视频采样帧率（gemini.video_fps）",
+                    min_value=0.1,
+                    max_value=20.0,
+                    value=float(base_config.gemini.video_fps),
+                    step=0.1,
+                )
+            else:
+                st.caption("当前 provider 为 volcengine，未启用 gemini.video_fps 运行时覆盖")
         with col2:
             runtime_overrides["parser.pre_delay_min_seconds"] = st.number_input(
                 "解析前最小等待秒数（parser.pre_delay_min_seconds）",
@@ -225,7 +250,7 @@ def main() -> None:
                 value=",".join(str(x) for x in base_config.retry.parser_backoff_seconds),
             )
             gemini_backoff_text = st.text_input(
-                "Gemini 重试退避序列（retry.gemini_backoff_seconds）",
+                "模型重试退避序列（retry.gemini_backoff_seconds）",
                 value=",".join(str(x) for x in base_config.retry.gemini_backoff_seconds),
             )
             runtime_overrides["circuit_breaker.parser.consecutive_failures"] = st.number_input(
@@ -235,7 +260,7 @@ def main() -> None:
                 step=1,
             )
             runtime_overrides["circuit_breaker.gemini.consecutive_failures"] = st.number_input(
-                "Gemini 连续失败熔断阈值（circuit_breaker.gemini.consecutive_failures）",
+                "模型连续失败熔断阈值（circuit_breaker.gemini.consecutive_failures）",
                 min_value=1,
                 value=base_config.circuit_breaker.gemini.consecutive_failures,
                 step=1,

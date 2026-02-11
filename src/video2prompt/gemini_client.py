@@ -151,8 +151,7 @@ class GeminiClient:
         keys = ("videometadata", "fps", "invalid_argument", "unknown field")
         return any(key in lowered for key in keys)
 
-    @staticmethod
-    def is_video_fetch_error_message(message: str) -> bool:
+    def is_video_fetch_error_message(self, message: str) -> bool:
         lowered = message.lower()
         keys = (
             "fetch",
@@ -162,6 +161,11 @@ class GeminiClient:
             "download",
             "url",
             "fileuri",
+            "403",
+            "forbid",
+            "openresty",
+            "text/html",
+            "mime type",
         )
         return any(key in lowered for key in keys)
 

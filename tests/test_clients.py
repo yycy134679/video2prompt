@@ -63,3 +63,41 @@ def test_parser_select_video_url_fallback() -> None:
         "play_addr": {"url_list": ["https://fallback-play"]},
     }
     assert client.select_video_url(video_data) == "https://fallback-h264"
+
+
+def test_parser_select_video_url_prefers_v95_domain() -> None:
+    client = ParserClient(base_url="http://localhost:80")
+    video_data = {
+        "bit_rate": [
+            {
+                "is_h265": 0,
+                "bit_rate": 1200,
+                "play_addr": {"url_list": ["https://v26-web.douyinvod.com/high"], "height": 1080},
+            },
+            {
+                "is_h265": 0,
+                "bit_rate": 700,
+                "play_addr": {"url_list": ["https://v95-web.douyinvod.com/mid"], "height": 1080},
+            },
+        ],
+        "play_addr_h264": {"url_list": ["https://fallback-h264"]},
+        "play_addr": {"url_list": ["https://fallback-play"]},
+    }
+
+    assert client.select_video_url(video_data) == "https://v95-web.douyinvod.com/mid"
+
+
+def test_parser_pick_url_prefers_v95_in_same_url_list() -> None:
+    client = ParserClient(base_url="http://localhost:80")
+    video_data = {
+        "bit_rate": [],
+        "play_addr_h264": {
+            "url_list": [
+                "https://v26-web.douyinvod.com/first",
+                "https://v95-web.douyinvod.com/second",
+            ]
+        },
+        "play_addr": {"url_list": ["https://fallback-play"]},
+    }
+
+    assert client.select_video_url(video_data) == "https://v95-web.douyinvod.com/second"

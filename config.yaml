@@ -1,7 +1,10 @@
+# 模型服务商配置（gemini/volcengine）
+provider: "gemini"
+
 # Gemini 视频理解服务配置
 gemini:
   # Gemini 中转服务地址
-  base_url: "https://api.huandutech.com"
+  base_url: "https://qfgapi.com"
   # 使用的 Gemini 模型名称
   model: "gemini-3-flash-preview"
   # 思考强度（minimal/low/medium/high）
@@ -15,12 +18,23 @@ gemini:
   # Gemini 请求超时时间（秒）
   timeout_seconds: 300
 
+# 火山方舟视频理解服务配置
+volcengine:
+  # 火山方舟 Chat API 基础地址
+  base_url: "https://ark.cn-beijing.volces.com/api/v3"
+  # 推理接入点 ID（请求体 model 字段实际使用此值）
+  endpoint_id: "ep-20260211113023-vrsbp"
+  # 目标模型名称（用于配置可读性，不直接作为请求体 model）
+  target_model: "doubao-seed-1-8-251228"
+  # 火山请求超时时间（秒）
+  timeout_seconds: 300
+
 # 抖音解析服务配置
 parser:
   # 解析服务地址（本地 Docker 服务）
   base_url: "http://localhost:80"
   # 并发解析任务数（建议 1-5）
-  concurrency: 4
+  concurrency: 3
   # 每条任务解析前随机等待最小秒数
   pre_delay_min_seconds: 1.5
   # 每条任务解析前随机等待最大秒数
@@ -48,13 +62,13 @@ circuit_breaker:
   # Parser 熔断阈值
   parser:
     # 连续失败次数阈值
-    consecutive_failures: 8
+    consecutive_failures: 4
     # 窗口失败率阈值（0-1）
     failure_rate: 0.6
   # Gemini 熔断阈值
   gemini:
     # 连续失败次数阈值
-    consecutive_failures: 5
+    consecutive_failures: 4
     # 窗口失败率阈值（0-1）
     failure_rate: 0.5
 

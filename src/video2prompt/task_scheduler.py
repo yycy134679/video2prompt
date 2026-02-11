@@ -13,9 +13,9 @@ from .batch_manager import BatchManager
 from .cache_store import CacheStore
 from .circuit_breaker import CircuitBreaker
 from .errors import CircuitBreakerOpenError, GeminiError, GeminiRetryableError, ParserError, ParserRetryableError
-from .gemini_client import GeminiClient
 from .models import AppConfig, Task, TaskState
 from .parser_client import ParserClient
+from .video_analysis_client import VideoAnalysisClient
 
 TaskCallback = Callable[[Task], None]
 CountdownCallback = Callable[[int], None]
@@ -27,7 +27,7 @@ class TaskScheduler:
     def __init__(
         self,
         parser: ParserClient,
-        gemini: GeminiClient,
+        model_client: VideoAnalysisClient,
         cache: CacheStore,
         config: AppConfig,
         parser_breaker: CircuitBreaker,
@@ -35,7 +35,7 @@ class TaskScheduler:
         logger: logging.Logger | None = None,
     ):
         self.parser = parser
-        self.gemini = gemini
+        self.model_client = model_client
         self.cache = cache
         self.config = config
         self.parser_breaker = parser_breaker
@@ -134,7 +134,7 @@ class TaskScheduler:
                 return
 
             await self._parse_with_retry(task, parser_semaphore, on_update, cancel_event)
-            await self._gemini_with_retry(task, on_update, cancel_event)
+            await self._model_with_retry(task, on_update, cancel_event)
 
             task.state = TaskState.COMPLETED
             self._emit(task, on_update)
@@ -208,13 +208,17 @@ class TaskScheduler:
                     raise ParserError(f"解析重试耗尽: {exc}") from exc
                 await self._backoff_wait("parser", attempt, on_update=on_update, task=task)
             except ParserError as exc:
-                self.parser_breaker.record_failure()
-                self.logger.error("解析不可重试错误: %s", exc)
-                if self.parser_breaker.is_tripped():
-                    self._trip_circuit("解析服务熔断")
+                # 对 4xx 这类链接/输入问题不计入熔断，避免误判为服务整体不可用。
+                if self._is_parser_client_side_error(str(exc)):
+                    self.logger.error("解析不可重试错误（不计入熔断）: %s", exc)
+                else:
+                    self.parser_breaker.record_failure()
+                    self.logger.error("解析不可重试错误: %s", exc)
+                    if self.parser_breaker.is_tripped():
+                        self._trip_circuit("解析服务熔断")
                 raise
 
-    async def _gemini_with_retry(
+    async def _model_with_retry(
         self,
         task: Task,
         on_update: TaskCallback | None,
@@ -236,7 +240,7 @@ class TaskScheduler:
             self._emit(task, on_update)
 
             try:
-                output, fps_used = await self.gemini.interpret_video(
+                output, fps_used = await self.model_client.interpret_video(
                     video_uri=task.video_url,
                     user_prompt=self._default_user_prompt,
                     fps=self.config.gemini.video_fps,
@@ -262,29 +266,38 @@ class TaskScheduler:
                 )
                 return
             except GeminiRetryableError as exc:
-                self.gemini_breaker.record_failure()
-                self.logger.warning("Gemini 可重试错误: %s", exc)
+                is_fetch_error = self.model_client.is_video_fetch_error_message(str(exc))
+                if is_fetch_error:
+                    self.logger.warning("模型可重试错误（视频直链访问失败，不计入熔断）: %s", exc)
+                else:
+                    self.gemini_breaker.record_failure()
+                    self.logger.warning("模型可重试错误: %s", exc)
 
-                # 视频直链失效时，先重新解析再试 Gemini。
-                if GeminiClient.is_video_fetch_error_message(str(exc)):
+                # 视频直链失效时，先重新解析再试模型请求。
+                if is_fetch_error:
                     self.logger.info("检测到视频资源拉取失败，尝试重新解析直链")
                     await self._reparse_video_url(task)
 
                 if self.gemini_breaker.is_tripped():
-                    self._trip_circuit("Gemini 服务熔断")
+                    self._trip_circuit("模型服务熔断")
                 if attempt >= max_attempts:
-                    raise GeminiError(f"Gemini 重试耗尽: {exc}") from exc
+                    raise GeminiError(f"模型重试耗尽: {exc}") from exc
                 await self._backoff_wait("gemini", attempt, on_update=on_update, task=task)
             except GeminiError as exc:
-                self.gemini_breaker.record_failure()
-                self.logger.error("Gemini 不可重试错误: %s", exc)
-                if GeminiClient.is_video_fetch_error_message(str(exc)):
+                is_fetch_error = self.model_client.is_video_fetch_error_message(str(exc))
+                if is_fetch_error:
+                    self.logger.error("模型不可重试错误（视频直链访问失败，不计入熔断）: %s", exc)
+                else:
+                    self.gemini_breaker.record_failure()
+                    self.logger.error("模型不可重试错误: %s", exc)
+
+                if is_fetch_error:
                     try:
                         await self._reparse_video_url(task)
                     except Exception as reparse_exc:  # noqa: BLE001
-                        raise GeminiError(f"Gemini 失败，且重解析失败: {reparse_exc}") from exc
+                        raise GeminiError(f"模型失败，且重解析失败: {reparse_exc}") from exc
                 if self.gemini_breaker.is_tripped():
-                    self._trip_circuit("Gemini 服务熔断")
+                    self._trip_circuit("模型服务熔断")
                 raise
 
     async def _reparse_video_url(self, task: Task) -> None:
@@ -335,6 +348,10 @@ class TaskScheduler:
     def _trip_circuit(self, reason: str) -> None:
         self._circuit_reason = reason
         raise CircuitBreakerOpenError(reason)
+
+    @staticmethod
+    def _is_parser_client_side_error(message: str) -> bool:
+        return "解析服务状态码 4" in message
 
     @staticmethod
     def _emit(task: Task, on_update: TaskCallback | None) -> None:

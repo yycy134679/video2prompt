@@ -23,6 +23,7 @@ from .models import (
     ParserConfig,
     RetryConfig,
     TaskConfig,
+    VolcengineConfig,
 )
 
 
@@ -58,6 +59,20 @@ class ConfigManager:
         if not value:
             raise ConfigError("缺少 GEMINI_API_KEY，请在 .env 中配置")
         return value
+
+    def get_volcengine_api_key(self) -> str:
+        value = os.getenv("VOLCENGINE_API_KEY", "").strip() or os.getenv("ARK_API_KEY", "").strip()
+        if not value:
+            raise ConfigError("缺少 VOLCENGINE_API_KEY（或 ARK_API_KEY），请在 .env 中配置")
+        return value
+
+    def get_provider_api_key(self) -> str:
+        config = self.get_config()
+        if config.provider == "gemini":
+            return self.get_gemini_api_key()
+        if config.provider == "volcengine":
+            return self.get_volcengine_api_key()
+        raise ConfigError(f"不支持的 provider: {config.provider}")
 
     def override(self, **kwargs: Any) -> None:
         """运行时覆盖配置。支持点路径键，例如 parser.concurrency=2。"""
@@ -107,7 +122,9 @@ class ConfigManager:
         merged = copy.deepcopy(defaults)
         self._deep_merge(merged, data)
 
+        provider = self._normalize_provider(str(merged.get("provider", "gemini")))
         gemini = GeminiConfig(**self._as_dict(merged, "gemini"))
+        volcengine = VolcengineConfig(**self._as_dict(merged, "volcengine"))
         parser = ParserConfig(**self._as_dict(merged, "parser"))
         retry = RetryConfig(**self._as_dict(merged, "retry"))
 
@@ -124,7 +141,9 @@ class ConfigManager:
         logging = LoggingConfig(**self._as_dict(merged, "logging"))
 
         config = AppConfig(
+            provider=provider,
             gemini=gemini,
+            volcengine=volcengine,
             parser=parser,
             retry=retry,
             circuit_breaker=cb,
@@ -145,6 +164,9 @@ class ConfigManager:
 
     @staticmethod
     def _validate(config: AppConfig) -> None:
+        if config.provider not in {"gemini", "volcengine"}:
+            raise ConfigError("provider 必须是 gemini/volcengine")
+
         if not (1 <= config.parser.concurrency <= 5):
             raise ConfigError("parser.concurrency 必须在 1-5 之间")
         if config.parser.pre_delay_min_seconds < 0 or config.parser.pre_delay_max_seconds < 0:
@@ -172,6 +194,12 @@ class ConfigManager:
 
         if config.gemini.timeout_seconds <= 0 or config.parser.timeout_seconds <= 0:
             raise ConfigError("timeout_seconds 必须 > 0")
+        if config.volcengine.timeout_seconds <= 0:
+            raise ConfigError("volcengine.timeout_seconds 必须 > 0")
+        if config.provider == "volcengine" and not config.volcengine.endpoint_id.strip():
+            raise ConfigError("provider=volcengine 时，volcengine.endpoint_id 不能为空")
+        if config.provider == "volcengine" and not config.volcengine.target_model.strip():
+            raise ConfigError("provider=volcengine 时，volcengine.target_model 不能为空")
 
         if not config.retry.parser_backoff_seconds or not config.retry.gemini_backoff_seconds:
             raise ConfigError("retry backoff 列表不能为空")
@@ -209,6 +237,8 @@ class ConfigManager:
         if not config.logging.file_path.strip():
             raise ConfigError("logging.file_path 不能为空")
 
+        ConfigManager._validate_provider_api_key(config.provider)
+
     @staticmethod
     def _normalize_thinking_level(value: str) -> str:
         return (value or "").strip().lower()
@@ -221,3 +251,20 @@ class ConfigManager:
         if normalized.startswith("mediaresolution_"):
             return normalized.replace("mediaresolution_", "media_resolution_", 1)
         return normalized
+
+    @staticmethod
+    def _normalize_provider(value: str) -> str:
+        normalized = (value or "").strip().lower()
+        return normalized or "gemini"
+
+    @staticmethod
+    def _validate_provider_api_key(provider: str) -> None:
+        if provider == "gemini":
+            if not os.getenv("GEMINI_API_KEY", "").strip():
+                raise ConfigError("provider=gemini 时缺少 GEMINI_API_KEY，请在 .env 中配置")
+            return
+
+        if provider == "volcengine":
+            volc_key = os.getenv("VOLCENGINE_API_KEY", "").strip() or os.getenv("ARK_API_KEY", "").strip()
+            if not volc_key:
+                raise ConfigError("provider=volcengine 时缺少 VOLCENGINE_API_KEY（或 ARK_API_KEY），请在 .env 中配置")
