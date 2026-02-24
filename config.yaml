@@ -4,7 +4,7 @@ provider: "gemini"
 # Gemini 视频理解服务配置
 gemini:
   # Gemini 中转服务地址
-  base_url: "https://qfgapi.com"
+  base_url: "https://api.huandutech.com"
   # 使用的 Gemini 模型名称
   model: "gemini-3-flash-preview"
   # 思考强度（minimal/low/medium/high）
