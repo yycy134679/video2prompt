@@ -14,7 +14,7 @@ from dotenv import load_dotenv
 from .errors import ConfigError
 from .models import (
     AppConfig,
-    BatchConfig,
+
     CacheConfig,
     CircuitBreakerConfig,
     CircuitServiceConfig,
@@ -135,7 +135,6 @@ class ConfigManager:
             gemini=CircuitServiceConfig(**self._as_dict(cb_data, "gemini")),
         )
 
-        batch = BatchConfig(**self._as_dict(merged, "batch"))
         task = TaskConfig(**self._as_dict(merged, "task"))
         cache = CacheConfig(**self._as_dict(merged, "cache"))
         logging = LoggingConfig(**self._as_dict(merged, "logging"))
@@ -147,7 +146,6 @@ class ConfigManager:
             parser=parser,
             retry=retry,
             circuit_breaker=cb,
-            batch=batch,
             task=task,
             cache=cache,
             logging=logging,
@@ -218,13 +216,6 @@ class ConfigManager:
             raise ConfigError("circuit_breaker.parser.consecutive_failures 必须 > 0")
         if config.circuit_breaker.gemini.consecutive_failures <= 0:
             raise ConfigError("circuit_breaker.gemini.consecutive_failures 必须 > 0")
-
-        if not (50 <= config.batch.size <= 200):
-            raise ConfigError("batch.size 必须在 50-200 之间")
-        if config.batch.rest_min_minutes <= 0 or config.batch.rest_max_minutes <= 0:
-            raise ConfigError("batch.rest_* 必须 > 0")
-        if config.batch.rest_min_minutes > config.batch.rest_max_minutes:
-            raise ConfigError("batch.rest_min_minutes 不能大于 rest_max_minutes")
 
         if config.task.completion_delay_min_seconds < 0 or config.task.completion_delay_max_seconds < 0:
             raise ConfigError("task.completion_delay_* 必须 >= 0")

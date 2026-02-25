@@ -37,6 +37,8 @@ class VolcengineConfig:
     endpoint_id: str = ""
     target_model: str = "doubao-seed-1-8-251228"
     timeout_seconds: int = 90
+    # 视频大小上限（MB），超过此值跳过模型调用；0 表示不限制
+    video_size_limit_mb: int = 50
 
 
 @dataclass
@@ -75,13 +77,6 @@ class CircuitBreakerConfig:
 
 
 @dataclass
-class BatchConfig:
-    size: int = 100
-    rest_min_minutes: float = 5.0
-    rest_max_minutes: float = 15.0
-
-
-@dataclass
 class TaskConfig:
     completion_delay_min_seconds: float = 0.8
     completion_delay_max_seconds: float = 2.0
@@ -107,7 +102,6 @@ class AppConfig:
     parser: ParserConfig = field(default_factory=ParserConfig)
     retry: RetryConfig = field(default_factory=RetryConfig)
     circuit_breaker: CircuitBreakerConfig = field(default_factory=CircuitBreakerConfig)
-    batch: BatchConfig = field(default_factory=BatchConfig)
     task: TaskConfig = field(default_factory=TaskConfig)
     cache: CacheConfig = field(default_factory=CacheConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
@@ -160,7 +154,6 @@ class Task:
     gemini_output: str = ""
     start_time: datetime | None = None
     end_time: datetime | None = None
-    batch_number: int = 0
     cache_hit: bool = False
     fps_used: float = 0.0
 

@@ -74,7 +74,6 @@ async def _run_scheduler(
     cache: CacheStore,
     table_placeholder,
     status_placeholder,
-    skip_batch_rest_once: bool,
 ):
     parser_http = httpx.AsyncClient(timeout=config.parser.timeout_seconds)
     model_timeout = config.gemini.timeout_seconds if config.provider == "gemini" else config.volcengine.timeout_seconds
@@ -129,24 +128,16 @@ async def _run_scheduler(
     )
 
     cancel_event = asyncio.Event()
-    skip_event = asyncio.Event()
-    if skip_batch_rest_once:
-        skip_event.set()
 
     def on_update(_: Task) -> None:
         _render_table(table_placeholder, tasks)
-
-    def on_countdown(remain: int) -> None:
-        status_placeholder.info(f"批次休息中，剩余 {remain}s（已支持跳过下一段休息）")
 
     try:
         await scheduler.run(
             tasks=tasks,
             user_prompt=default_user_prompt,
             on_update=on_update,
-            on_batch_countdown=on_countdown,
             cancel_event=cancel_event,
-            skip_rest_event=skip_event,
         )
     finally:
         await parser_http.aclose()
@@ -201,13 +192,6 @@ def main() -> None:
                 max_value=5,
                 value=base_config.parser.concurrency,
                 step=1,
-            )
-            runtime_overrides["batch.size"] = st.number_input(
-                "每批任务数（batch.size）",
-                min_value=50,
-                max_value=200,
-                value=base_config.batch.size,
-                step=10,
             )
             if base_config.provider == "gemini":
                 runtime_overrides["gemini.video_fps"] = st.number_input(
@@ -266,8 +250,6 @@ def main() -> None:
                 step=1,
             )
 
-        skip_batch_rest_once = st.checkbox("本次运行跳过下一次批次休息", value=False)
-
     st.subheader("视频解析提示词配置")
     default_user_prompt = st.text_area(
         "DEFAULT_USER_PROMPT",
@@ -275,8 +257,8 @@ def main() -> None:
         height=180,
     )
     if st.button("保存 DEFAULT_USER_PROMPT"):
-        asyncio.run(cache.save_system_prompt(default_user_prompt))
-        st.session_state["default_user_prompt"] = default_user_prompt
+        asyncio.run(cache.save_system_prompt(default_user_prompt or ""))
+        st.session_state["default_user_prompt"] = default_user_prompt or ""
         st.success("DEFAULT_USER_PROMPT 已保存")
 
     left, right = st.columns(2)
@@ -329,12 +311,12 @@ def main() -> None:
             _run_scheduler(
                 config=runtime_config,
                 api_key=api_key,
-                default_user_prompt=default_user_prompt,
+                default_user_prompt=default_user_prompt or "",
                 tasks=tasks,
                 cache=cache,
                 table_placeholder=table_placeholder,
                 status_placeholder=status_placeholder,
-                skip_batch_rest_once=skip_batch_rest_once,
+
             )
         )
 

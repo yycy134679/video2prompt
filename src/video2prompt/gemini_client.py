@@ -166,6 +166,8 @@ class GeminiClient:
             "openresty",
             "text/html",
             "mime type",
+            "mimetype",
+            "exceeds the limit",
         )
         return any(key in lowered for key in keys)
 

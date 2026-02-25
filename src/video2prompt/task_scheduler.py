@@ -9,7 +9,8 @@ import time
 from collections.abc import Callable
 from datetime import datetime
 
-from .batch_manager import BatchManager
+import httpx
+
 from .cache_store import CacheStore
 from .circuit_breaker import CircuitBreaker
 from .errors import CircuitBreakerOpenError, GeminiError, GeminiRetryableError, ParserError, ParserRetryableError
@@ -18,7 +19,6 @@ from .parser_client import ParserClient
 from .video_analysis_client import VideoAnalysisClient
 
 TaskCallback = Callable[[Task], None]
-CountdownCallback = Callable[[int], None]
 
 
 class TaskScheduler:
@@ -52,49 +52,13 @@ class TaskScheduler:
         tasks: list[Task],
         user_prompt: str,
         on_update: TaskCallback | None = None,
-        on_batch_countdown: CountdownCallback | None = None,
         cancel_event: asyncio.Event | None = None,
-        skip_rest_event: asyncio.Event | None = None,
     ) -> None:
         if cancel_event is None:
             cancel_event = asyncio.Event()
-        if skip_rest_event is None:
-            skip_rest_event = asyncio.Event()
 
         self._default_user_prompt = user_prompt
-        batch_manager = BatchManager(
-            batch_size=self.config.batch.size,
-            rest_min=self.config.batch.rest_min_minutes,
-            rest_max=self.config.batch.rest_max_minutes,
-        )
-
-        batches = batch_manager.split_batches(tasks)
-        for batch_index, batch in enumerate(batches, start=1):
-            if cancel_event.is_set():
-                self._mark_cancelled(batch, on_update)
-                break
-
-            for task in batch:
-                task.batch_number = batch_index
-
-            await self.run_batch(batch, on_update=on_update, cancel_event=cancel_event)
-
-            if cancel_event.is_set():
-                break
-            if self._circuit_reason:
-                self._mark_circuit_break(batch, on_update)
-                break
-
-            if batch_index < len(batches):
-                ok = await batch_manager.wait_between_batches(
-                    on_countdown=on_batch_countdown,
-                    cancel_event=cancel_event,
-                    skip_event=skip_rest_event,
-                )
-                if not ok:
-                    remain_tasks = [task for remain_batch in batches[batch_index:] for task in remain_batch]
-                    self._mark_cancelled(remain_tasks, on_update)
-                    break
+        await self.run_batch(tasks, on_update=on_update, cancel_event=cancel_event)
 
     async def run_batch(
         self,
@@ -134,6 +98,7 @@ class TaskScheduler:
                 return
 
             await self._parse_with_retry(task, parser_semaphore, on_update, cancel_event)
+            await self._check_video_size(task)
             await self._model_with_retry(task, on_update, cancel_event)
 
             task.state = TaskState.COMPLETED
@@ -299,6 +264,27 @@ class TaskScheduler:
                 if self.gemini_breaker.is_tripped():
                     self._trip_circuit("模型服务熔断")
                 raise
+
+    async def _check_video_size(self, task: Task) -> None:
+        """通过 HTTP HEAD 预检视频文件大小，超过限制则提前跳过。"""
+        limit_mb = getattr(self.config.volcengine, "video_size_limit_mb", 0)
+        if limit_mb <= 0 or not task.video_url:
+            return
+
+        try:
+            async with httpx.AsyncClient(timeout=10, follow_redirects=True) as client:
+                resp = await client.head(task.video_url)
+                content_length = resp.headers.get("content-length")
+                if content_length is not None:
+                    size_mb = int(content_length) / (1024 * 1024)
+                    if size_mb >= limit_mb:
+                        raise GeminiError(
+                            f"视频文件过大（{size_mb:.1f} MiB >= {limit_mb} MiB 上限），跳过模型调用"
+                        )
+        except GeminiError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            self.logger.warning("视频大小预检失败（不阻塞流程）: %s", exc)
 
     async def _reparse_video_url(self, task: Task) -> None:
         result = await self.parser.parse_video(task.original_link)

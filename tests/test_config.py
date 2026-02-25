@@ -58,10 +58,6 @@ circuit_breaker:
   gemini:
     consecutive_failures: 5
     failure_rate: 0.5
-batch:
-  size: 100
-  rest_min_minutes: 5
-  rest_max_minutes: 15
 task:
   completion_delay_min_seconds: 0.8
   completion_delay_max_seconds: 2.0

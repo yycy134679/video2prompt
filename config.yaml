@@ -1,10 +1,10 @@
 # 模型服务商配置（gemini/volcengine）
-provider: "gemini"
+provider: "volcengine"
 
 # Gemini 视频理解服务配置
 gemini:
   # Gemini 中转服务地址
-  base_url: "https://api.huandutech.com"
+  base_url: "https://qfgapi.com"
   # 使用的 Gemini 模型名称
   model: "gemini-3-flash-preview"
   # 思考强度（minimal/low/medium/high）
@@ -23,35 +23,37 @@ volcengine:
   # 火山方舟 Chat API 基础地址
   base_url: "https://ark.cn-beijing.volces.com/api/v3"
   # 推理接入点 ID（请求体 model 字段实际使用此值）
-  endpoint_id: "ep-20260211113023-vrsbp"
+  endpoint_id: "ep-20260225230351-dx6fm"
   # 目标模型名称（用于配置可读性，不直接作为请求体 model）
-  target_model: "doubao-seed-1-8-251228"
+  target_model: "seed-2.0-lite"
   # 火山请求超时时间（秒）
   timeout_seconds: 300
+  # 视频大小上限（MB），超过此值跳过模型调用；0 表示不限制
+  video_size_limit_mb: 49
 
 # 抖音解析服务配置
 parser:
   # 解析服务地址（本地 Docker 服务）
   base_url: "http://localhost:80"
   # 并发解析任务数（建议 1-5）
-  concurrency: 3
+  concurrency: 2
   # 每条任务解析前随机等待最小秒数
-  pre_delay_min_seconds: 1.5
+  pre_delay_min_seconds: 3.0
   # 每条任务解析前随机等待最大秒数
-  pre_delay_max_seconds: 4.0
+  pre_delay_max_seconds: 5.0
   # 解析请求超时时间（秒）
   timeout_seconds: 30
 
 # 重试与退避配置
 retry:
   # Parser 重试等待序列（秒）
-  parser_backoff_seconds: [10, 30, 120, 300]
+  parser_backoff_seconds: [10, 30, 120]
   # Gemini 重试等待序列（秒）
-  gemini_backoff_seconds: [5, 15, 60, 180]
+  gemini_backoff_seconds: [5, 15, 60]
   # Parser 最大退避上限（秒）
-  parser_backoff_cap_seconds: 600
+  parser_backoff_cap_seconds: 120
   # Gemini 最大退避上限（秒）
-  gemini_backoff_cap_seconds: 300
+  gemini_backoff_cap_seconds: 60
   # 退避期间是否暂停全局队列
   pause_global_queue_during_backoff: true
 
@@ -71,15 +73,6 @@ circuit_breaker:
     consecutive_failures: 4
     # 窗口失败率阈值（0-1）
     failure_rate: 0.5
-
-# 批处理配置
-batch:
-  # 每批处理任务数
-  size: 100
-  # 批间休息最小分钟数
-  rest_min_minutes: 5
-  # 批间休息最大分钟数
-  rest_max_minutes: 15
 
 # 单任务尾部延时配置
 task:

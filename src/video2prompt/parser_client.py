@@ -78,7 +78,18 @@ class ParserClient:
                 if is_h265 != 0:
                     continue
 
+                # 过滤非视频 MIME 类型（如 audio/mpeg），避免模型收到音频流报错
+                item_mime = str(item.get("mime_type", "")).lower().strip()
+                if item_mime and not item_mime.startswith("video/"):
+                    continue
+
                 play_addr = item.get("play_addr") if isinstance(item.get("play_addr"), dict) else {}
+
+                # play_addr 级别也做 MIME 校验
+                addr_mime = str(play_addr.get("mime_type", "") or play_addr.get("data_type", "")).lower().strip()
+                if addr_mime and not addr_mime.startswith("video/"):
+                    continue
+
                 height = item.get("height", play_addr.get("height", 0))
                 try:
                     height_int = int(height)
