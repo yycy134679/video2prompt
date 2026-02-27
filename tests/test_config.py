@@ -212,7 +212,7 @@ def test_provider_volcengine_get_provider_api_key(tmp_path: Path, monkeypatch: p
 provider: "volcengine"
 volcengine:
   endpoint_id: "ep-test"
-  target_model: "doubao-seed-1-8-251228"
+  target_model: "seed-2.0-lite"
         """.strip(),
     )
 

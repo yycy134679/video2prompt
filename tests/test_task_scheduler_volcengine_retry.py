@@ -37,9 +37,10 @@ class _StubCache:
         aweme_id: str,
         video_url: str,
         gemini_output: str,
+        can_translate: str,
         fps_used: float,
     ) -> None:
-        del link_hash, prompt_hash, aweme_id, video_url, gemini_output, fps_used
+        del link_hash, prompt_hash, aweme_id, video_url, gemini_output, can_translate, fps_used
         return None
 
 

@@ -199,6 +199,10 @@ class ConfigManager:
             raise ConfigError("provider=volcengine 时，volcengine.endpoint_id 不能为空")
         if config.provider == "volcengine" and not config.volcengine.target_model.strip():
             raise ConfigError("provider=volcengine 时，volcengine.target_model 不能为空")
+        if config.provider == "volcengine":
+            target_model = config.volcengine.target_model.strip().lower()
+            if not target_model.startswith("seed-2.0"):
+                raise ConfigError("当前版本仅支持 seed-2.0 系列模型，请将 volcengine.target_model 设置为 seed-2.0-*")
         if not (0.2 <= float(config.volcengine.video_fps) <= 5):
             raise ConfigError("volcengine.video_fps 必须在 [0.2,5] 区间")
         thinking_type = ConfigManager._normalize_volc_thinking_type(config.volcengine.thinking_type)

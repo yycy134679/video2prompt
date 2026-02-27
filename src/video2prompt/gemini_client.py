@@ -7,12 +7,13 @@ from typing import Any
 import httpx
 
 from .errors import GeminiError, GeminiRetryableError
+from .review_result import DEFAULT_REVIEW_PROMPT
 
 
 class GeminiClient:
     """Gemini 原生格式客户端。"""
 
-    DEFAULT_USER_PROMPT = "按要求解析视频并输出 sora 提示词"
+    DEFAULT_USER_PROMPT = DEFAULT_REVIEW_PROMPT
 
     def __init__(
         self,

@@ -8,12 +8,14 @@ from pathlib import Path
 from openpyxl import load_workbook
 
 from .models import Task, TaskState
+from .review_result import extract_can_translate
 
 
 class ExcelExporter:
-    """基于模板导出 Product ID/Prompt。"""
+    """基于模板导出 Product ID/能否翻译/Prompt。"""
 
     DOUYIN_LINK_HEADER = "抖音链接"
+    CAN_TRANSLATE_HEADER = "能否翻译"
 
     def __init__(self, template_path: str = "docs/product_prompt_template.xlsx"):
         self.template_path = template_path
@@ -36,6 +38,11 @@ class ExcelExporter:
         if pid_col is None or prompt_col is None:
             raise ValueError("模板缺少 Product ID 或 Prompt 列")
 
+        can_translate_col = headers.get(self.CAN_TRANSLATE_HEADER)
+        if can_translate_col is None:
+            can_translate_col = ws.max_column + 1
+            ws.cell(row=1, column=can_translate_col).value = self.CAN_TRANSLATE_HEADER
+
         link_col = headers.get(self.DOUYIN_LINK_HEADER)
         if link_col is None:
             link_col = ws.max_column + 1
@@ -48,6 +55,7 @@ class ExcelExporter:
             if not task.gemini_output:
                 continue
             ws.cell(row=row, column=pid_col).value = task.pid
+            ws.cell(row=row, column=can_translate_col).value = task.can_translate or extract_can_translate(task.gemini_output)
             ws.cell(row=row, column=prompt_col).value = task.gemini_output
             ws.cell(row=row, column=link_col).value = task.original_link
             row += 1

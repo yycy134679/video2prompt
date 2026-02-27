@@ -24,6 +24,7 @@ def test_export_auto_add_douyin_link_column(tmp_path: Path) -> None:
             pid="p-001",
             original_link="https://www.douyin.com/video/1",
             state=TaskState.COMPLETED,
+            can_translate="能",
             gemini_output="提示词A",
         )
     ]
@@ -32,10 +33,12 @@ def test_export_auto_add_douyin_link_column(tmp_path: Path) -> None:
     result = load_workbook(output_path).active
     assert result.cell(row=1, column=1).value == "Product ID"
     assert result.cell(row=1, column=2).value == "Prompt"
-    assert result.cell(row=1, column=3).value == "抖音链接"
+    assert result.cell(row=1, column=3).value == "能否翻译"
+    assert result.cell(row=1, column=4).value == "抖音链接"
     assert result.cell(row=2, column=1).value == "p-001"
     assert result.cell(row=2, column=2).value == "提示词A"
-    assert result.cell(row=2, column=3).value == "https://www.douyin.com/video/1"
+    assert result.cell(row=2, column=3).value == "能"
+    assert result.cell(row=2, column=4).value == "https://www.douyin.com/video/1"
 
 
 def test_export_use_existing_douyin_link_column(tmp_path: Path) -> None:
@@ -55,14 +58,17 @@ def test_export_use_existing_douyin_link_column(tmp_path: Path) -> None:
             pid="p-002",
             original_link="https://www.douyin.com/video/2",
             state=TaskState.COMPLETED,
+            can_translate="不能",
             gemini_output="提示词B",
         )
     ]
     exporter.export(tasks=tasks, output_path=str(output_path))
 
     result = load_workbook(output_path).active
-    assert result.max_column == 3
+    assert result.max_column == 4
     assert result.cell(row=1, column=2).value == "抖音链接"
+    assert result.cell(row=1, column=4).value == "能否翻译"
     assert result.cell(row=2, column=1).value == "p-002"
     assert result.cell(row=2, column=2).value == "https://www.douyin.com/video/2"
     assert result.cell(row=2, column=3).value == "提示词B"
+    assert result.cell(row=2, column=4).value == "不能"

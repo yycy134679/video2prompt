@@ -29,6 +29,7 @@ class CacheStore:
                     aweme_id TEXT NOT NULL,
                     video_url TEXT NOT NULL,
                     gemini_output TEXT NOT NULL DEFAULT '',
+                    can_translate TEXT NOT NULL DEFAULT '',
                     fps_used REAL NOT NULL DEFAULT 0,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -36,6 +37,11 @@ class CacheStore:
                 )
                 """
             )
+            cursor = await db.execute("PRAGMA table_info(cache)")
+            columns = {str(row[1]) for row in await cursor.fetchall()}
+            await cursor.close()
+            if "can_translate" not in columns:
+                await db.execute("ALTER TABLE cache ADD COLUMN can_translate TEXT NOT NULL DEFAULT ''")
             await db.execute(
                 """
                 CREATE TABLE IF NOT EXISTS system_prompt (
@@ -59,7 +65,7 @@ class CacheStore:
         async with aiosqlite.connect(self.db_path) as db:
             cursor = await db.execute(
                 """
-                SELECT link_hash, prompt_hash, aweme_id, video_url, gemini_output, fps_used, created_at
+                SELECT link_hash, prompt_hash, aweme_id, video_url, gemini_output, can_translate, fps_used, created_at
                 FROM cache WHERE link_hash = ? AND prompt_hash = ?
                 """,
                 (link_hash, prompt_hash),
@@ -76,8 +82,9 @@ class CacheStore:
             aweme_id=row[2],
             video_url=row[3],
             gemini_output=row[4],
-            fps_used=float(row[5]),
-            created_at=datetime.fromisoformat(str(row[6])),
+            can_translate=row[5] or "",
+            fps_used=float(row[6]),
+            created_at=datetime.fromisoformat(str(row[7])),
         )
 
     async def save_result(
@@ -87,22 +94,24 @@ class CacheStore:
         aweme_id: str,
         video_url: str,
         gemini_output: str,
+        can_translate: str,
         fps_used: float,
     ) -> None:
         async with aiosqlite.connect(self.db_path) as db:
             await db.execute(
                 """
-                INSERT INTO cache (link_hash, prompt_hash, aweme_id, video_url, gemini_output, fps_used)
-                VALUES (?, ?, ?, ?, ?, ?)
+                INSERT INTO cache (link_hash, prompt_hash, aweme_id, video_url, gemini_output, can_translate, fps_used)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(link_hash, prompt_hash)
                 DO UPDATE SET
                     aweme_id = excluded.aweme_id,
                     video_url = excluded.video_url,
                     gemini_output = excluded.gemini_output,
+                    can_translate = excluded.can_translate,
                     fps_used = excluded.fps_used,
                     updated_at = CURRENT_TIMESTAMP
                 """,
-                (link_hash, prompt_hash, aweme_id, video_url, gemini_output, fps_used),
+                (link_hash, prompt_hash, aweme_id, video_url, gemini_output, can_translate, fps_used),
             )
             await db.commit()
 

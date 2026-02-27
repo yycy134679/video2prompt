@@ -14,7 +14,7 @@ def test_volcengine_build_request_body_contains_video_and_text() -> None:
     client = VolcengineClient(
         base_url="https://ark.cn-beijing.volces.com/api/v3",
         endpoint_id="ep-test",
-        target_model="doubao-seed-1-8-251228",
+        target_model="seed-2.0-lite",
         api_key="x",
     )
     body = client.build_request_body(
@@ -60,7 +60,7 @@ def test_volcengine_interpret_video_success() -> None:
             client = VolcengineClient(
                 base_url="https://ark.cn-beijing.volces.com/api/v3",
                 endpoint_id="ep-test",
-                target_model="doubao-seed-1-8-251228",
+                target_model="seed-2.0-lite",
                 api_key="volc_key",
                 http_client=http_client,
             )
@@ -97,7 +97,7 @@ def test_volcengine_interpret_video_success_with_observation() -> None:
             client = VolcengineClient(
                 base_url="https://ark.cn-beijing.volces.com/api/v3",
                 endpoint_id="ep-test",
-                target_model="doubao-seed-1-8-251228",
+                target_model="seed-2.0-lite",
                 api_key="volc_key",
                 http_client=http_client,
             )
@@ -133,7 +133,7 @@ def test_volcengine_429_is_retryable() -> None:
             client = VolcengineClient(
                 base_url="https://ark.cn-beijing.volces.com/api/v3",
                 endpoint_id="ep-test",
-                target_model="doubao-seed-1-8-251228",
+                target_model="seed-2.0-lite",
                 api_key="volc_key",
                 http_client=http_client,
             )

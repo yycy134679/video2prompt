@@ -18,6 +18,7 @@ from video2prompt.gemini_client import GeminiClient
 from video2prompt.logging_utils import setup_logging
 from video2prompt.models import Task, TaskInput
 from video2prompt.parser_client import ParserClient
+from video2prompt.review_result import DEFAULT_REVIEW_PROMPT
 from video2prompt.task_scheduler import TaskScheduler
 from video2prompt.validator import InputValidator
 from video2prompt.volcengine_batch_client import VolcengineBatchClient
@@ -36,9 +37,10 @@ def _task_to_row(task: Task) -> dict[str, Any]:
         "解析重试": task.parse_retries,
         "模型重试": task.gemini_retries,
         "耗时(s)": round(task.duration_seconds, 2),
+        "能否翻译": task.can_translate,
         "FPS": task.fps_used,
         "错误": task.error_message,
-        "模型输出预览": task.gemini_output[:120],
+        "信息摘要预览": task.gemini_output[:120],
         "缓存命中": task.cache_hit,
         "prompt_tokens": task.model_prompt_tokens,
         "completion_tokens": task.model_completion_tokens,
@@ -210,7 +212,7 @@ def main() -> None:
 
     if "default_user_prompt" not in st.session_state:
         saved_prompt = asyncio.run(cache.load_system_prompt())
-        st.session_state["default_user_prompt"] = saved_prompt or "请基于视频内容生成高质量 Sora 提示词，中文输出。"
+        st.session_state["default_user_prompt"] = saved_prompt or DEFAULT_REVIEW_PROMPT
 
     if base_config.provider == "gemini":
         st.caption(f"当前模型服务商：gemini（model={base_config.gemini.model}）")

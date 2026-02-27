@@ -35,7 +35,7 @@ class GeminiConfig:
 class VolcengineConfig:
     base_url: str = "https://ark.cn-beijing.volces.com/api/v3"
     endpoint_id: str = ""
-    target_model: str = "doubao-seed-1-8-251228"
+    target_model: str = "seed-2.0-lite"
     timeout_seconds: int = 90
     video_fps: float = 1.0
     thinking_type: str = "enabled"
@@ -147,6 +147,7 @@ class CachedResult:
     aweme_id: str
     video_url: str
     gemini_output: str
+    can_translate: str
     fps_used: float
     created_at: datetime
 
@@ -161,6 +162,7 @@ class Task:
     parse_retries: int = 0
     gemini_retries: int = 0
     error_message: str = ""
+    can_translate: str = ""
     gemini_output: str = ""
     start_time: datetime | None = None
     end_time: datetime | None = None

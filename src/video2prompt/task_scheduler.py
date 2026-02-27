@@ -19,6 +19,7 @@ from .errors import CircuitBreakerOpenError, GeminiError, GeminiRetryableError, 
 from .logging_utils import build_model_log_extra
 from .models import AppConfig, Task, TaskState
 from .parser_client import ParserClient
+from .review_result import extract_can_translate, split_review_columns
 from .video_analysis_client import VideoAnalysisClient
 from .volcengine_batch_client import VolcengineBatchClient
 from .volcengine_files_client import VolcengineFilesClient
@@ -241,7 +242,9 @@ class TaskScheduler:
         task.cache_hit = True
         task.aweme_id = cached.aweme_id
         task.video_url = cached.video_url
-        task.gemini_output = cached.gemini_output
+        cached_can_translate, cached_summary = split_review_columns(cached.gemini_output)
+        task.can_translate = cached.can_translate or cached_can_translate or extract_can_translate(cached.gemini_output)
+        task.gemini_output = cached_summary or cached.gemini_output
         task.fps_used = cached.fps_used
         task.state = TaskState.COMPLETED
         self._emit(task, on_update)
@@ -323,7 +326,7 @@ class TaskScheduler:
                 self.gemini_breaker.record_success()
                 self._burst_penalty_factor = max(1.0, self._burst_penalty_factor * 0.8)
 
-                task.gemini_output = output
+                task.can_translate, task.gemini_output = split_review_columns(output)
                 task.fps_used = fps_used
                 self._inject_model_observation(task, api_mode)
 
@@ -553,6 +556,7 @@ class TaskScheduler:
             aweme_id=task.aweme_id,
             video_url=task.video_url,
             gemini_output=task.gemini_output,
+            can_translate=task.can_translate,
             fps_used=task.fps_used,
         )
 
@@ -671,7 +675,8 @@ class TaskScheduler:
                 if key not in result_map:
                     raise GeminiError(f"Batch 返回缺少 custom_id={key}")
                 payload = result_map[key]
-                task.gemini_output = str(payload.get("text", "") or "").strip()
+                raw_text = str(payload.get("text", "") or "").strip()
+                task.can_translate, task.gemini_output = split_review_columns(raw_text)
                 if not task.gemini_output:
                     raise GeminiError(f"Batch 返回空文本 custom_id={key}")
                 task.fps_used = self.config.volcengine.video_fps
