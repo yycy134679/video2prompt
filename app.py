@@ -20,7 +20,10 @@ from video2prompt.models import Task, TaskInput
 from video2prompt.parser_client import ParserClient
 from video2prompt.task_scheduler import TaskScheduler
 from video2prompt.validator import InputValidator
+from video2prompt.volcengine_batch_client import VolcengineBatchClient
 from video2prompt.volcengine_client import VolcengineClient
+from video2prompt.volcengine_files_client import VolcengineFilesClient
+from video2prompt.volcengine_responses_client import VolcengineResponsesClient
 
 
 def _task_to_row(task: Task) -> dict[str, Any]:
@@ -37,6 +40,12 @@ def _task_to_row(task: Task) -> dict[str, Any]:
         "错误": task.error_message,
         "模型输出预览": task.gemini_output[:120],
         "缓存命中": task.cache_hit,
+        "prompt_tokens": task.model_prompt_tokens,
+        "completion_tokens": task.model_completion_tokens,
+        "reasoning_tokens": task.model_reasoning_tokens,
+        "cached_tokens": task.model_cached_tokens,
+        "request_id": task.model_request_id,
+        "api_mode": task.model_api_mode,
     }
 
 
@@ -78,6 +87,9 @@ async def _run_scheduler(
     parser_http = httpx.AsyncClient(timeout=config.parser.timeout_seconds)
     model_timeout = config.gemini.timeout_seconds if config.provider == "gemini" else config.volcengine.timeout_seconds
     model_http = httpx.AsyncClient(timeout=model_timeout)
+    volc_files_client = None
+    volc_responses_client = None
+    volc_batch_client = None
 
     parser_client = ParserClient(
         base_url=config.parser.base_url,
@@ -101,6 +113,33 @@ async def _run_scheduler(
             target_model=config.volcengine.target_model,
             api_key=api_key,
             timeout_seconds=config.volcengine.timeout_seconds,
+            thinking_type=config.volcengine.thinking_type,
+            max_completion_tokens=config.volcengine.max_completion_tokens,
+            stream_usage=config.volcengine.stream_usage,
+            http_client=model_http,
+        )
+        volc_files_client = VolcengineFilesClient(
+            base_url=config.volcengine.base_url,
+            api_key=api_key,
+            timeout_seconds=config.volcengine.timeout_seconds,
+            http_client=model_http,
+        )
+        volc_responses_client = VolcengineResponsesClient(
+            base_url=config.volcengine.base_url,
+            endpoint_id=config.volcengine.endpoint_id,
+            api_key=api_key,
+            timeout_seconds=config.volcengine.timeout_seconds,
+            thinking_type=config.volcengine.thinking_type,
+            max_completion_tokens=config.volcengine.max_completion_tokens,
+            http_client=model_http,
+        )
+        volc_batch_client = VolcengineBatchClient(
+            base_url=config.volcengine.base_url,
+            endpoint_id=config.volcengine.endpoint_id,
+            api_key=api_key,
+            timeout_seconds=config.volcengine.timeout_seconds,
+            thinking_type=config.volcengine.thinking_type,
+            max_completion_tokens=config.volcengine.max_completion_tokens,
             http_client=model_http,
         )
     else:
@@ -125,6 +164,9 @@ async def _run_scheduler(
         parser_breaker=parser_breaker,
         gemini_breaker=gemini_breaker,
         logger=st.session_state["logger"],
+        volcengine_files_client=volc_files_client,
+        volcengine_responses_client=volc_responses_client,
+        volcengine_batch_client=volc_batch_client,
     )
 
     cancel_event = asyncio.Event()
@@ -156,7 +198,11 @@ def main() -> None:
         st.error(f"配置错误: {exc}")
         st.stop()
 
-    logger = setup_logging(base_config.logging.file_path, base_config.logging.level)
+    logger = setup_logging(
+        base_config.logging.file_path,
+        base_config.logging.level,
+        base_config.logging.retention_days,
+    )
     st.session_state["logger"] = logger
 
     cache = CacheStore(base_config.cache.db_path)
@@ -185,6 +231,7 @@ def main() -> None:
     with st.expander("运行时配置覆盖（仅本次运行生效，不写回 config.yaml）", expanded=False):
         col1, col2, col3 = st.columns(3)
         runtime_overrides: dict[str, Any] = {}
+        volc_max_tokens_text = ""
         with col1:
             runtime_overrides["parser.concurrency"] = st.number_input(
                 "解析并发数（parser.concurrency）",
@@ -202,7 +249,30 @@ def main() -> None:
                     step=0.1,
                 )
             else:
-                st.caption("当前 provider 为 volcengine，未启用 gemini.video_fps 运行时覆盖")
+                runtime_overrides["volcengine.video_fps"] = st.number_input(
+                    "模型视频采样帧率（volcengine.video_fps）",
+                    min_value=0.2,
+                    max_value=5.0,
+                    value=float(base_config.volcengine.video_fps),
+                    step=0.1,
+                )
+                thinking_options = ["enabled", "disabled", "auto"]
+                current_thinking = (base_config.volcengine.thinking_type or "enabled").strip().lower()
+                if current_thinking not in thinking_options:
+                    current_thinking = "enabled"
+                runtime_overrides["volcengine.thinking_type"] = st.selectbox(
+                    "思考模式（volcengine.thinking_type）",
+                    options=thinking_options,
+                    index=thinking_options.index(current_thinking),
+                )
+                volc_max_tokens_text = st.text_input(
+                    "最大输出 token（volcengine.max_completion_tokens，留空不下发）",
+                    value=(
+                        ""
+                        if base_config.volcengine.max_completion_tokens is None
+                        else str(base_config.volcengine.max_completion_tokens)
+                    ),
+                )
         with col2:
             runtime_overrides["parser.pre_delay_min_seconds"] = st.number_input(
                 "解析前最小等待秒数（parser.pre_delay_min_seconds）",
@@ -249,6 +319,22 @@ def main() -> None:
                 value=base_config.circuit_breaker.gemini.consecutive_failures,
                 step=1,
             )
+            if base_config.provider == "volcengine":
+                runtime_overrides["volcengine.stream_usage"] = st.checkbox(
+                    "开启流式用量统计（volcengine.stream_usage）",
+                    value=bool(base_config.volcengine.stream_usage),
+                )
+                runtime_overrides["volcengine.use_batch_chat"] = st.checkbox(
+                    "开启批量 Chat（volcengine.use_batch_chat）",
+                    value=bool(base_config.volcengine.use_batch_chat),
+                )
+                runtime_overrides["volcengine.batch_size"] = st.number_input(
+                    "批量 Chat 批次大小（volcengine.batch_size）",
+                    min_value=1,
+                    max_value=50,
+                    value=int(base_config.volcengine.batch_size),
+                    step=1,
+                )
 
     st.subheader("视频解析提示词配置")
     default_user_prompt = st.text_area(
@@ -298,6 +384,9 @@ def main() -> None:
             config_manager.clear_overrides()
             runtime_overrides["retry.parser_backoff_seconds"] = _parse_backoff(parser_backoff_text)
             runtime_overrides["retry.gemini_backoff_seconds"] = _parse_backoff(gemini_backoff_text)
+            if base_config.provider == "volcengine":
+                token_text = (volc_max_tokens_text or "").strip()
+                runtime_overrides["volcengine.max_completion_tokens"] = int(token_text) if token_text else None
             config_manager.override_mapping(runtime_overrides)
             runtime_config = config_manager.get_config()
         except Exception as exc:  # noqa: BLE001

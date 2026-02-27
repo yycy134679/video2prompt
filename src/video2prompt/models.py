@@ -37,8 +37,17 @@ class VolcengineConfig:
     endpoint_id: str = ""
     target_model: str = "doubao-seed-1-8-251228"
     timeout_seconds: int = 90
-    # 视频大小上限（MB），超过此值跳过模型调用；0 表示不限制
-    video_size_limit_mb: int = 50
+    video_fps: float = 1.0
+    thinking_type: str = "enabled"
+    max_completion_tokens: int | None = None
+    input_mode: str = "auto"
+    chat_video_size_limit_mb: int = 50
+    files_video_size_limit_mb: int = 512
+    files_expire_days: int = 7
+    files_poll_timeout_seconds: int = 180
+    stream_usage: bool = False
+    use_batch_chat: bool = False
+    batch_size: int = 20
 
 
 @dataclass
@@ -92,6 +101,7 @@ class CacheConfig:
 class LoggingConfig:
     file_path: str = "logs/app.log"
     level: str = "INFO"
+    retention_days: int = 7
 
 
 @dataclass
@@ -156,6 +166,12 @@ class Task:
     end_time: datetime | None = None
     cache_hit: bool = False
     fps_used: float = 0.0
+    model_prompt_tokens: int = 0
+    model_completion_tokens: int = 0
+    model_reasoning_tokens: int = 0
+    model_cached_tokens: int = 0
+    model_request_id: str = ""
+    model_api_mode: str = ""
 
     @property
     def duration_seconds(self) -> float:

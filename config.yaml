@@ -28,8 +28,28 @@ volcengine:
   target_model: "seed-2.0-lite"
   # 火山请求超时时间（秒）
   timeout_seconds: 300
-  # 视频大小上限（MB），超过此值跳过模型调用；0 表示不限制
-  video_size_limit_mb: 49
+  # 视频采样帧率（Chat API: video_url.fps，范围 0.2-5）
+  video_fps: 2.0
+  # 思考模式（enabled/disabled/auto）
+  thinking_type: "enabled"
+  # 最大输出 token 数（null 表示不显式下发）
+  max_completion_tokens: null
+  # 输入模式（auto/chat_url/responses_file）
+  input_mode: "auto"
+  # Chat URL 模式视频上限（MB，文档硬上限 50）
+  chat_video_size_limit_mb: 50
+  # Files API 视频上限（MB，文档上限 512）
+  files_video_size_limit_mb: 512
+  # 上传文件过期天数（1-30）
+  files_expire_days: 7
+  # 文件激活轮询超时时间（秒）
+  files_poll_timeout_seconds: 180
+  # 是否开启 stream usage 统计（灰度项）
+  stream_usage: false
+  # 是否开启批量 Chat 模式（灰度项）
+  use_batch_chat: false
+  # 批量 Chat 每批条数（建议 1-50）
+  batch_size: 20
 
 # 抖音解析服务配置
 parser:
@@ -94,3 +114,5 @@ logging:
   file_path: "logs/app.log"
   # 日志级别（DEBUG/INFO/WARNING/ERROR/CRITICAL）
   level: "INFO"
+  # 日志保留天数（按自然日滚动）
+  retention_days: 7

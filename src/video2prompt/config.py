@@ -14,7 +14,6 @@ from dotenv import load_dotenv
 from .errors import ConfigError
 from .models import (
     AppConfig,
-
     CacheConfig,
     CircuitBreakerConfig,
     CircuitServiceConfig,
@@ -125,6 +124,8 @@ class ConfigManager:
         provider = self._normalize_provider(str(merged.get("provider", "gemini")))
         gemini = GeminiConfig(**self._as_dict(merged, "gemini"))
         volcengine = VolcengineConfig(**self._as_dict(merged, "volcengine"))
+        volcengine.thinking_type = self._normalize_volc_thinking_type(volcengine.thinking_type)
+        volcengine.input_mode = self._normalize_volc_input_mode(volcengine.input_mode)
         parser = ParserConfig(**self._as_dict(merged, "parser"))
         retry = RetryConfig(**self._as_dict(merged, "retry"))
 
@@ -198,6 +199,32 @@ class ConfigManager:
             raise ConfigError("provider=volcengine 时，volcengine.endpoint_id 不能为空")
         if config.provider == "volcengine" and not config.volcengine.target_model.strip():
             raise ConfigError("provider=volcengine 时，volcengine.target_model 不能为空")
+        if not (0.2 <= float(config.volcengine.video_fps) <= 5):
+            raise ConfigError("volcengine.video_fps 必须在 [0.2,5] 区间")
+        thinking_type = ConfigManager._normalize_volc_thinking_type(config.volcengine.thinking_type)
+        if thinking_type not in {"enabled", "disabled", "auto"}:
+            raise ConfigError("volcengine.thinking_type 必须是 enabled/disabled/auto")
+        if config.volcengine.max_completion_tokens is not None and int(config.volcengine.max_completion_tokens) <= 0:
+            raise ConfigError("volcengine.max_completion_tokens 必须为正整数或 null")
+        input_mode = ConfigManager._normalize_volc_input_mode(config.volcengine.input_mode)
+        if input_mode not in {"auto", "chat_url", "responses_file"}:
+            raise ConfigError("volcengine.input_mode 必须是 auto/chat_url/responses_file")
+        if config.volcengine.chat_video_size_limit_mb <= 0 or config.volcengine.chat_video_size_limit_mb > 50:
+            raise ConfigError("volcengine.chat_video_size_limit_mb 必须在 1-50 之间")
+        if config.volcengine.files_video_size_limit_mb <= 0 or config.volcengine.files_video_size_limit_mb > 512:
+            raise ConfigError("volcengine.files_video_size_limit_mb 必须在 1-512 之间")
+        if config.volcengine.chat_video_size_limit_mb > config.volcengine.files_video_size_limit_mb:
+            raise ConfigError("volcengine.chat_video_size_limit_mb 不能大于 files_video_size_limit_mb")
+        if not (1 <= config.volcengine.files_expire_days <= 30):
+            raise ConfigError("volcengine.files_expire_days 必须在 1-30 之间")
+        if config.volcengine.files_poll_timeout_seconds <= 0:
+            raise ConfigError("volcengine.files_poll_timeout_seconds 必须 > 0")
+        if not isinstance(config.volcengine.stream_usage, bool):
+            raise ConfigError("volcengine.stream_usage 必须是布尔值")
+        if not isinstance(config.volcengine.use_batch_chat, bool):
+            raise ConfigError("volcengine.use_batch_chat 必须是布尔值")
+        if config.volcengine.batch_size <= 0:
+            raise ConfigError("volcengine.batch_size 必须 > 0")
 
         if not config.retry.parser_backoff_seconds or not config.retry.gemini_backoff_seconds:
             raise ConfigError("retry backoff 列表不能为空")
@@ -227,6 +254,8 @@ class ConfigManager:
             raise ConfigError("logging.level 必须是 DEBUG/INFO/WARNING/ERROR/CRITICAL")
         if not config.logging.file_path.strip():
             raise ConfigError("logging.file_path 不能为空")
+        if config.logging.retention_days <= 0:
+            raise ConfigError("logging.retention_days 必须 > 0")
 
         ConfigManager._validate_provider_api_key(config.provider)
 
@@ -247,6 +276,14 @@ class ConfigManager:
     def _normalize_provider(value: str) -> str:
         normalized = (value or "").strip().lower()
         return normalized or "gemini"
+
+    @staticmethod
+    def _normalize_volc_thinking_type(value: str) -> str:
+        return (value or "").strip().lower()
+
+    @staticmethod
+    def _normalize_volc_input_mode(value: str) -> str:
+        return (value or "").strip().lower()
 
     @staticmethod
     def _validate_provider_api_key(provider: str) -> None:

@@ -38,6 +38,17 @@ volcengine:
   endpoint_id: "ep-test"
   target_model: "doubao-seed-1-8-251228"
   timeout_seconds: 90
+  video_fps: 1.0
+  thinking_type: "enabled"
+  max_completion_tokens: null
+  input_mode: "auto"
+  chat_video_size_limit_mb: 50
+  files_video_size_limit_mb: 512
+  files_expire_days: 7
+  files_poll_timeout_seconds: 180
+  stream_usage: false
+  use_batch_chat: false
+  batch_size: 20
 parser:
   base_url: "http://localhost:80"
   concurrency: 3
@@ -67,6 +78,7 @@ cache:
 logging:
   file_path: "logs/app.log"
   level: "INFO"
+  retention_days: 7
         """.strip(),
     )
 
@@ -80,6 +92,9 @@ logging:
     assert config.gemini.thinking_level == "high"
     assert config.gemini.media_resolution == "media_resolution_medium"
     assert config.parser.concurrency == 3
+    assert config.volcengine.video_fps == 1.0
+    assert config.volcengine.input_mode == "auto"
+    assert config.logging.retention_days == 7
 
     cm.override(**{"gemini.video_fps": 0.5, "parser.concurrency": 2})
     updated = cm.get_config()
@@ -203,3 +218,92 @@ volcengine:
 
     cm = ConfigManager(env_path=str(env), config_path=str(cfg))
     assert cm.get_provider_api_key() == "volc_test_key"
+
+
+def test_provider_volcengine_invalid_video_fps(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.delenv("VOLCENGINE_API_KEY", raising=False)
+    monkeypatch.delenv("ARK_API_KEY", raising=False)
+
+    env = tmp_path / ".env"
+    cfg = tmp_path / "config.yaml"
+    _write(env, "VOLCENGINE_API_KEY=volc_test_key\n")
+    _write(
+        cfg,
+        """
+provider: "volcengine"
+volcengine:
+  endpoint_id: "ep-test"
+  target_model: "seed-2.0-lite"
+  video_fps: 5.1
+        """.strip(),
+    )
+
+    with pytest.raises(ConfigError):
+        ConfigManager(env_path=str(env), config_path=str(cfg))
+
+
+def test_provider_volcengine_invalid_input_mode(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.delenv("VOLCENGINE_API_KEY", raising=False)
+    monkeypatch.delenv("ARK_API_KEY", raising=False)
+
+    env = tmp_path / ".env"
+    cfg = tmp_path / "config.yaml"
+    _write(env, "VOLCENGINE_API_KEY=volc_test_key\n")
+    _write(
+        cfg,
+        """
+provider: "volcengine"
+volcengine:
+  endpoint_id: "ep-test"
+  target_model: "seed-2.0-lite"
+  input_mode: "unknown_mode"
+        """.strip(),
+    )
+
+    with pytest.raises(ConfigError):
+        ConfigManager(env_path=str(env), config_path=str(cfg))
+
+
+def test_provider_volcengine_invalid_size_limit(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.delenv("VOLCENGINE_API_KEY", raising=False)
+    monkeypatch.delenv("ARK_API_KEY", raising=False)
+
+    env = tmp_path / ".env"
+    cfg = tmp_path / "config.yaml"
+    _write(env, "VOLCENGINE_API_KEY=volc_test_key\n")
+    _write(
+        cfg,
+        """
+provider: "volcengine"
+volcengine:
+  endpoint_id: "ep-test"
+  target_model: "seed-2.0-lite"
+  chat_video_size_limit_mb: 55
+        """.strip(),
+    )
+
+    with pytest.raises(ConfigError):
+        ConfigManager(env_path=str(env), config_path=str(cfg))
+
+
+def test_config_invalid_logging_retention_days(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.delenv("VOLCENGINE_API_KEY", raising=False)
+    monkeypatch.delenv("ARK_API_KEY", raising=False)
+
+    env = tmp_path / ".env"
+    cfg = tmp_path / "config.yaml"
+    _write(env, "GEMINI_API_KEY=test_key\n")
+    _write(
+        cfg,
+        """
+logging:
+  retention_days: 0
+        """.strip(),
+    )
+
+    with pytest.raises(ConfigError):
+        ConfigManager(env_path=str(env), config_path=str(cfg))
