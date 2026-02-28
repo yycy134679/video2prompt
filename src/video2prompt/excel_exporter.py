@@ -8,7 +8,6 @@ from pathlib import Path
 from openpyxl import load_workbook
 
 from .models import Task, TaskState
-from .review_result import extract_can_translate
 
 
 class ExcelExporter:
@@ -55,7 +54,7 @@ class ExcelExporter:
             if not task.gemini_output:
                 continue
             ws.cell(row=row, column=pid_col).value = task.pid
-            ws.cell(row=row, column=can_translate_col).value = task.can_translate or extract_can_translate(task.gemini_output)
+            ws.cell(row=row, column=can_translate_col).value = task.can_translate
             ws.cell(row=row, column=prompt_col).value = task.gemini_output
             ws.cell(row=row, column=link_col).value = task.original_link
             row += 1

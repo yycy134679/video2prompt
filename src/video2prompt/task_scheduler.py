@@ -31,6 +31,9 @@ TaskCallback = Callable[[Task], None]
 class TaskScheduler:
     """编排解析、解读、缓存与风控节奏。"""
 
+    OUTPUT_FORMAT_PLAIN_TEXT = "plain_text"
+    OUTPUT_FORMAT_JSON = "json"
+
     def __init__(
         self,
         parser: ParserClient,
@@ -59,12 +62,14 @@ class TaskScheduler:
         self._pause_lock = asyncio.Lock()
         self._circuit_reason: str | None = None
         self._default_user_prompt = ""
+        self._output_format = self.OUTPUT_FORMAT_PLAIN_TEXT
         self._burst_penalty_factor = 1.0
 
     async def run(
         self,
         tasks: list[Task],
         user_prompt: str,
+        output_format: str = OUTPUT_FORMAT_PLAIN_TEXT,
         on_update: TaskCallback | None = None,
         cancel_event: asyncio.Event | None = None,
     ) -> None:
@@ -72,6 +77,7 @@ class TaskScheduler:
             cancel_event = asyncio.Event()
 
         self._default_user_prompt = user_prompt
+        self._output_format = self._normalize_output_format(output_format)
         await self.run_batch(tasks, on_update=on_update, cancel_event=cancel_event)
 
     async def run_batch(
@@ -233,18 +239,20 @@ class TaskScheduler:
 
     async def _handle_cache(self, task: Task, on_update: TaskCallback | None) -> None:
         link_hash = self.cache.hash_link(task.original_link)
-        prompt_hash = (
-            self.cache.hash_prompt(self._default_user_prompt) if self.config.cache.include_prompt_hash_in_key else "_"
-        )
+        prompt_hash = self._build_prompt_hash_for_cache()
         cached = await self.cache.get_cached_result(link_hash=link_hash, prompt_hash=prompt_hash)
         if cached is None:
             return
         task.cache_hit = True
         task.aweme_id = cached.aweme_id
         task.video_url = cached.video_url
-        cached_can_translate, cached_summary = split_review_columns(cached.gemini_output)
-        task.can_translate = cached.can_translate or cached_can_translate or extract_can_translate(cached.gemini_output)
-        task.gemini_output = cached_summary or cached.gemini_output
+        if self._output_format == self.OUTPUT_FORMAT_JSON:
+            cached_can_translate, cached_summary = split_review_columns(cached.gemini_output)
+            task.can_translate = cached.can_translate or cached_can_translate or extract_can_translate(cached.gemini_output)
+            task.gemini_output = cached_summary or cached.gemini_output
+        else:
+            task.can_translate = cached.can_translate or ""
+            task.gemini_output = cached.gemini_output
         task.fps_used = cached.fps_used
         task.state = TaskState.COMPLETED
         self._emit(task, on_update)
@@ -326,7 +334,7 @@ class TaskScheduler:
                 self.gemini_breaker.record_success()
                 self._burst_penalty_factor = max(1.0, self._burst_penalty_factor * 0.8)
 
-                task.can_translate, task.gemini_output = split_review_columns(output)
+                task.can_translate, task.gemini_output = self._parse_output_by_format(output)
                 task.fps_used = fps_used
                 self._inject_model_observation(task, api_mode)
 
@@ -545,11 +553,7 @@ class TaskScheduler:
 
     async def _save_task_cache(self, task: Task) -> None:
         link_hash = self.cache.hash_link(task.original_link)
-        prompt_hash = (
-            self.cache.hash_prompt(self._default_user_prompt)
-            if self.config.cache.include_prompt_hash_in_key
-            else "_"
-        )
+        prompt_hash = self._build_prompt_hash_for_cache()
         await self.cache.save_result(
             link_hash=link_hash,
             prompt_hash=prompt_hash,
@@ -676,7 +680,7 @@ class TaskScheduler:
                     raise GeminiError(f"Batch 返回缺少 custom_id={key}")
                 payload = result_map[key]
                 raw_text = str(payload.get("text", "") or "").strip()
-                task.can_translate, task.gemini_output = split_review_columns(raw_text)
+                task.can_translate, task.gemini_output = self._parse_output_by_format(raw_text)
                 if not task.gemini_output:
                     raise GeminiError(f"Batch 返回空文本 custom_id={key}")
                 task.fps_used = self.config.volcengine.video_fps
@@ -718,3 +722,22 @@ class TaskScheduler:
         self._burst_penalty_factor = 1.0
         self.parser_breaker.reset()
         self.gemini_breaker.reset()
+
+    @classmethod
+    def _normalize_output_format(cls, output_format: str) -> str:
+        normalized = (output_format or "").strip().lower()
+        if normalized == cls.OUTPUT_FORMAT_JSON:
+            return cls.OUTPUT_FORMAT_JSON
+        return cls.OUTPUT_FORMAT_PLAIN_TEXT
+
+    def _build_prompt_hash_for_cache(self) -> str:
+        if self.config.cache.include_prompt_hash_in_key:
+            cache_key_source = f"{self._default_user_prompt}\n#输出格式={self._output_format}"
+            return self.cache.hash_prompt(cache_key_source)
+        return self.cache.hash_prompt(f"#输出格式={self._output_format}")
+
+    def _parse_output_by_format(self, output: str) -> tuple[str, str]:
+        text = str(output or "").strip()
+        if self._output_format == self.OUTPUT_FORMAT_JSON:
+            return split_review_columns(text)
+        return "", text

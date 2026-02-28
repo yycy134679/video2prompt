@@ -26,6 +26,14 @@ from video2prompt.volcengine_client import VolcengineClient
 from video2prompt.volcengine_files_client import VolcengineFilesClient
 from video2prompt.volcengine_responses_client import VolcengineResponsesClient
 
+OUTPUT_FORMAT_PLAIN_TEXT = "plain_text"
+OUTPUT_FORMAT_JSON = "json"
+OUTPUT_FORMAT_LABEL_TO_VALUE = {
+    "纯文本（默认）": OUTPUT_FORMAT_PLAIN_TEXT,
+    "JSON": OUTPUT_FORMAT_JSON,
+}
+OUTPUT_FORMAT_VALUE_TO_LABEL = {value: label for label, value in OUTPUT_FORMAT_LABEL_TO_VALUE.items()}
+
 
 def _task_to_row(task: Task) -> dict[str, Any]:
     return {
@@ -81,6 +89,7 @@ async def _run_scheduler(
     config,
     api_key: str,
     default_user_prompt: str,
+    output_format: str,
     tasks: list[Task],
     cache: CacheStore,
     table_placeholder,
@@ -180,6 +189,7 @@ async def _run_scheduler(
         await scheduler.run(
             tasks=tasks,
             user_prompt=default_user_prompt,
+            output_format=output_format,
             on_update=on_update,
             cancel_event=cancel_event,
         )
@@ -213,6 +223,8 @@ def main() -> None:
     if "default_user_prompt" not in st.session_state:
         saved_prompt = asyncio.run(cache.load_system_prompt())
         st.session_state["default_user_prompt"] = saved_prompt or DEFAULT_REVIEW_PROMPT
+    if "output_format" not in st.session_state:
+        st.session_state["output_format"] = OUTPUT_FORMAT_PLAIN_TEXT
 
     if base_config.provider == "gemini":
         st.caption(f"当前模型服务商：gemini（model={base_config.gemini.model}）")
@@ -231,6 +243,16 @@ def main() -> None:
             st.warning(msg)
 
     with st.expander("运行时配置覆盖（仅本次运行生效，不写回 config.yaml）", expanded=False):
+        current_output_format = str(st.session_state.get("output_format", OUTPUT_FORMAT_PLAIN_TEXT))
+        current_output_label = OUTPUT_FORMAT_VALUE_TO_LABEL.get(current_output_format, "纯文本（默认）")
+        output_format_label = st.selectbox(
+            "输出格式",
+            options=list(OUTPUT_FORMAT_LABEL_TO_VALUE.keys()),
+            index=list(OUTPUT_FORMAT_LABEL_TO_VALUE.keys()).index(current_output_label),
+            help="纯文本会保留模型原始输出；JSON 会按现有规则解析为“能否翻译+信息摘要”。",
+        )
+        output_format = OUTPUT_FORMAT_LABEL_TO_VALUE[output_format_label]
+        st.session_state["output_format"] = output_format
         col1, col2, col3 = st.columns(3)
         runtime_overrides: dict[str, Any] = {}
         volc_max_tokens_text = ""
@@ -403,6 +425,7 @@ def main() -> None:
                 config=runtime_config,
                 api_key=api_key,
                 default_user_prompt=default_user_prompt or "",
+                output_format=output_format,
                 tasks=tasks,
                 cache=cache,
                 table_placeholder=table_placeholder,
@@ -413,6 +436,7 @@ def main() -> None:
 
         st.session_state["last_tasks"] = tasks
         st.session_state["last_default_user_prompt"] = default_user_prompt
+        st.session_state["last_output_format"] = output_format
         status_placeholder.success("任务执行完成")
 
     if st.session_state.get("last_tasks"):
