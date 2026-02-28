@@ -24,6 +24,7 @@ class VolcengineClient:
         api_key: str,
         timeout_seconds: int = 90,
         thinking_type: str = "enabled",
+        reasoning_effort: str = "medium",
         max_completion_tokens: int | None = None,
         stream_usage: bool = False,
         http_client: httpx.AsyncClient | None = None,
@@ -34,6 +35,7 @@ class VolcengineClient:
         self.api_key = api_key
         self.timeout_seconds = timeout_seconds
         self.thinking_type = (thinking_type or "").strip().lower() or "enabled"
+        self.reasoning_effort = (reasoning_effort or "").strip().lower() or "medium"
         self.max_completion_tokens = max_completion_tokens
         self.stream_usage = bool(stream_usage)
         self._http_client = http_client
@@ -67,6 +69,8 @@ class VolcengineClient:
         }
         if self.thinking_type in {"enabled", "disabled", "auto"}:
             body["thinking"] = {"type": self.thinking_type}
+        if self.thinking_type != "disabled" and self.reasoning_effort in {"minimal", "low", "medium", "high"}:
+            body["reasoning_effort"] = self.reasoning_effort
         if self.max_completion_tokens is not None:
             body["max_completion_tokens"] = int(self.max_completion_tokens)
         if self.stream_usage:

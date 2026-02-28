@@ -19,6 +19,7 @@ class VolcengineBatchClient:
         api_key: str,
         timeout_seconds: int = 90,
         thinking_type: str = "enabled",
+        reasoning_effort: str = "medium",
         max_completion_tokens: int | None = None,
         http_client: httpx.AsyncClient | None = None,
     ):
@@ -27,6 +28,7 @@ class VolcengineBatchClient:
         self.api_key = api_key
         self.timeout_seconds = timeout_seconds
         self.thinking_type = (thinking_type or "").strip().lower() or "enabled"
+        self.reasoning_effort = (reasoning_effort or "").strip().lower() or "medium"
         self.max_completion_tokens = max_completion_tokens
         self._http_client = http_client
 
@@ -69,6 +71,8 @@ class VolcengineBatchClient:
             }
             if self.thinking_type in {"enabled", "disabled", "auto"}:
                 req["thinking"] = {"type": self.thinking_type}
+            if self.thinking_type != "disabled" and self.reasoning_effort in {"minimal", "low", "medium", "high"}:
+                req["reasoning_effort"] = self.reasoning_effort
             if self.max_completion_tokens is not None:
                 req["max_completion_tokens"] = int(self.max_completion_tokens)
             requests_payload.append(req)
@@ -234,4 +238,3 @@ class VolcengineBatchClient:
             if isinstance(val, str) and val.strip():
                 return val.strip()
         return ""
-

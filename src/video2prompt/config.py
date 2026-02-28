@@ -125,6 +125,7 @@ class ConfigManager:
         gemini = GeminiConfig(**self._as_dict(merged, "gemini"))
         volcengine = VolcengineConfig(**self._as_dict(merged, "volcengine"))
         volcengine.thinking_type = self._normalize_volc_thinking_type(volcengine.thinking_type)
+        volcengine.reasoning_effort = self._normalize_volc_reasoning_effort(volcengine.reasoning_effort)
         volcengine.input_mode = self._normalize_volc_input_mode(volcengine.input_mode)
         parser = ParserConfig(**self._as_dict(merged, "parser"))
         retry = RetryConfig(**self._as_dict(merged, "retry"))
@@ -208,6 +209,9 @@ class ConfigManager:
         thinking_type = ConfigManager._normalize_volc_thinking_type(config.volcengine.thinking_type)
         if thinking_type not in {"enabled", "disabled", "auto"}:
             raise ConfigError("volcengine.thinking_type 必须是 enabled/disabled/auto")
+        reasoning_effort = ConfigManager._normalize_volc_reasoning_effort(config.volcengine.reasoning_effort)
+        if reasoning_effort not in {"minimal", "low", "medium", "high"}:
+            raise ConfigError("volcengine.reasoning_effort 必须是 minimal/low/medium/high")
         if config.volcengine.max_completion_tokens is not None and int(config.volcengine.max_completion_tokens) <= 0:
             raise ConfigError("volcengine.max_completion_tokens 必须为正整数或 null")
         input_mode = ConfigManager._normalize_volc_input_mode(config.volcengine.input_mode)
@@ -284,6 +288,11 @@ class ConfigManager:
     @staticmethod
     def _normalize_volc_thinking_type(value: str) -> str:
         return (value or "").strip().lower()
+
+    @staticmethod
+    def _normalize_volc_reasoning_effort(value: str) -> str:
+        normalized = (value or "").strip().lower()
+        return normalized or "medium"
 
     @staticmethod
     def _normalize_volc_input_mode(value: str) -> str:

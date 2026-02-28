@@ -31,6 +31,25 @@ def test_volcengine_build_request_body_contains_video_and_text() -> None:
     assert content[1]["type"] == "text"
     assert content[1]["text"] == "请总结视频"
     assert body["thinking"]["type"] == "enabled"
+    assert body["reasoning_effort"] == "medium"
+
+
+def test_volcengine_build_request_body_disabled_thinking_skip_reasoning_effort() -> None:
+    client = VolcengineClient(
+        base_url="https://ark.cn-beijing.volces.com/api/v3",
+        endpoint_id="ep-test",
+        target_model="seed-2.0-lite",
+        api_key="x",
+        thinking_type="disabled",
+        reasoning_effort="high",
+    )
+    body = client.build_request_body(
+        video_uri="https://example.com/video.mp4",
+        user_prompt="请总结视频",
+        fps=1.0,
+    )
+    assert body["thinking"]["type"] == "disabled"
+    assert "reasoning_effort" not in body
 
 
 def test_volcengine_interpret_video_success() -> None:

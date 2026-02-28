@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 
 import httpx
 import pytest
@@ -12,6 +13,8 @@ from video2prompt.volcengine_responses_client import VolcengineResponsesClient
 def test_create_response_with_file_id_success() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.url.path == "/api/v3/responses"
+        payload = json.loads(request.content.decode("utf-8"))
+        assert payload["reasoning_effort"] == "high"
         return httpx.Response(
             status_code=200,
             headers={"x-request-id": "req-resp-1"},
@@ -35,6 +38,7 @@ def test_create_response_with_file_id_success() -> None:
                 base_url="https://ark.cn-beijing.volces.com/api/v3",
                 endpoint_id="ep-test",
                 api_key="k",
+                reasoning_effort="high",
                 http_client=http_client,
             )
             text = await client.create_response_with_file_id("file-123", "请分析视频")
@@ -84,4 +88,3 @@ def test_create_response_with_file_id_retryable() -> None:
 
     with pytest.raises(GeminiRetryableError):
         asyncio.run(_run())
-

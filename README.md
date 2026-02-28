@@ -47,6 +47,7 @@ cp .env.example .env
 | `VOLCENGINE_API_KEY` 或 `ARK_API_KEY` | 火山方舟 API Key      |
 
 在 `config.yaml` 中设置 `provider` 为 `gemini` 或 `volcengine`，并按需调整模型参数。
+当 `provider=volcengine` 时，`volcengine.endpoint_id` 必填，`target_model` 需为 `seed-2.0-*`，并可通过 `volcengine.reasoning_effort` 调节思考强度（`minimal/low/medium/high`）。
 
 ### 3. 启动服务
 
@@ -138,6 +139,7 @@ volcengine:
   timeout_seconds: 300
   video_fps: 2.0
   thinking_type: "enabled"         # enabled / disabled / auto
+  reasoning_effort: "medium"       # minimal / low / medium / high
   input_mode: "auto"               # auto / chat_url / responses_file
   use_batch_chat: false            # 批量 Chat 模式（灰度）
   batch_size: 20

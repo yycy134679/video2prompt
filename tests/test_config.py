@@ -93,6 +93,7 @@ logging:
     assert config.gemini.media_resolution == "media_resolution_medium"
     assert config.parser.concurrency == 3
     assert config.volcengine.video_fps == 1.0
+    assert config.volcengine.reasoning_effort == "medium"
     assert config.volcengine.input_mode == "auto"
     assert config.logging.retention_days == 7
 
@@ -259,6 +260,29 @@ volcengine:
   endpoint_id: "ep-test"
   target_model: "seed-2.0-lite"
   input_mode: "unknown_mode"
+        """.strip(),
+    )
+
+    with pytest.raises(ConfigError):
+        ConfigManager(env_path=str(env), config_path=str(cfg))
+
+
+def test_provider_volcengine_invalid_reasoning_effort(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.delenv("VOLCENGINE_API_KEY", raising=False)
+    monkeypatch.delenv("ARK_API_KEY", raising=False)
+
+    env = tmp_path / ".env"
+    cfg = tmp_path / "config.yaml"
+    _write(env, "VOLCENGINE_API_KEY=volc_test_key\n")
+    _write(
+        cfg,
+        """
+provider: "volcengine"
+volcengine:
+  endpoint_id: "ep-test"
+  target_model: "seed-2.0-lite"
+  reasoning_effort: "extreme"
         """.strip(),
     )
 

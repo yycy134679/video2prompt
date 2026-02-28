@@ -39,6 +39,7 @@ class VolcengineConfig:
     timeout_seconds: int = 90
     video_fps: float = 1.0
     thinking_type: str = "enabled"
+    reasoning_effort: str = "medium"
     max_completion_tokens: int | None = None
     input_mode: str = "auto"
     chat_video_size_limit_mb: int = 50

@@ -32,6 +32,8 @@ volcengine:
   video_fps: 2.0
   # 思考模式（enabled/disabled/auto）
   thinking_type: "enabled"
+  # 思考强度（minimal/low/medium/high，仅在 thinking_type 非 disabled 时下发）
+  reasoning_effort: "high"
   # 最大输出 token 数（null 表示不显式下发）
   max_completion_tokens: null
   # 输入模式（auto/chat_url/responses_file）

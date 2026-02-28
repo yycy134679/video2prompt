@@ -125,6 +125,7 @@ async def _run_scheduler(
             api_key=api_key,
             timeout_seconds=config.volcengine.timeout_seconds,
             thinking_type=config.volcengine.thinking_type,
+            reasoning_effort=config.volcengine.reasoning_effort,
             max_completion_tokens=config.volcengine.max_completion_tokens,
             stream_usage=config.volcengine.stream_usage,
             http_client=model_http,
@@ -141,6 +142,7 @@ async def _run_scheduler(
             api_key=api_key,
             timeout_seconds=config.volcengine.timeout_seconds,
             thinking_type=config.volcengine.thinking_type,
+            reasoning_effort=config.volcengine.reasoning_effort,
             max_completion_tokens=config.volcengine.max_completion_tokens,
             http_client=model_http,
         )
@@ -150,6 +152,7 @@ async def _run_scheduler(
             api_key=api_key,
             timeout_seconds=config.volcengine.timeout_seconds,
             thinking_type=config.volcengine.thinking_type,
+            reasoning_effort=config.volcengine.reasoning_effort,
             max_completion_tokens=config.volcengine.max_completion_tokens,
             http_client=model_http,
         )
@@ -288,6 +291,15 @@ def main() -> None:
                     "思考模式（volcengine.thinking_type）",
                     options=thinking_options,
                     index=thinking_options.index(current_thinking),
+                )
+                reasoning_options = ["minimal", "low", "medium", "high"]
+                current_reasoning = (base_config.volcengine.reasoning_effort or "medium").strip().lower()
+                if current_reasoning not in reasoning_options:
+                    current_reasoning = "medium"
+                runtime_overrides["volcengine.reasoning_effort"] = st.selectbox(
+                    "思考强度（volcengine.reasoning_effort）",
+                    options=reasoning_options,
+                    index=reasoning_options.index(current_reasoning),
                 )
                 volc_max_tokens_text = st.text_input(
                     "最大输出 token（volcengine.max_completion_tokens，留空不下发）",
