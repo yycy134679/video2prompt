@@ -16,7 +16,8 @@ from video2prompt.errors import ConfigError
 from video2prompt.excel_exporter import ExcelExporter
 from video2prompt.gemini_client import GeminiClient
 from video2prompt.logging_utils import setup_logging
-from video2prompt.models import Task, TaskInput
+from video2prompt.markdown_exporter import MarkdownExporter
+from video2prompt.models import AppMode, Task, TaskInput
 from video2prompt.parser_client import ParserClient
 from video2prompt.review_result import DEFAULT_REVIEW_PROMPT
 from video2prompt.task_scheduler import TaskScheduler
@@ -59,13 +60,19 @@ def _task_to_row(task: Task) -> dict[str, Any]:
     }
 
 
-def _rows(tasks: list[Task]) -> list[dict[str, Any]]:
-    return [_task_to_row(task) for task in tasks]
+def _rows(tasks: list[Task], show_category: bool) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for task in tasks:
+        row = _task_to_row(task)
+        if show_category:
+            row["类目"] = task.category or InputValidator.UNCATEGORIZED
+        rows.append(row)
+    return rows
 
 
-def _render_table(table_placeholder, tasks: list[Task]) -> None:
+def _render_table(table_placeholder, tasks: list[Task], show_category: bool) -> None:
     table_placeholder.dataframe(
-        _rows(tasks),
+        _rows(tasks, show_category=show_category),
         width="stretch",
         column_config={
             "原始链接": st.column_config.LinkColumn("原始链接"),
@@ -91,6 +98,7 @@ async def _run_scheduler(
     default_user_prompt: str,
     output_format: str,
     tasks: list[Task],
+    show_category: bool,
     cache: CacheStore,
     table_placeholder,
     status_placeholder,
@@ -186,7 +194,7 @@ async def _run_scheduler(
     cancel_event = asyncio.Event()
 
     def on_update(_: Task) -> None:
-        _render_table(table_placeholder, tasks)
+        _render_table(table_placeholder, tasks, show_category=show_category)
 
     try:
         await scheduler.run(
@@ -228,6 +236,8 @@ def main() -> None:
         st.session_state["default_user_prompt"] = saved_prompt or DEFAULT_REVIEW_PROMPT
     if "output_format" not in st.session_state:
         st.session_state["output_format"] = OUTPUT_FORMAT_PLAIN_TEXT
+    if "app_mode" not in st.session_state:
+        st.session_state["app_mode"] = AppMode.VIDEO_PROMPT.value
 
     if base_config.provider == "gemini":
         st.caption(f"当前模型服务商：gemini（model={base_config.gemini.model}）")
@@ -236,6 +246,18 @@ def main() -> None:
             "当前模型服务商：volcengine "
             f"（endpoint_id={base_config.volcengine.endpoint_id}，target_model={base_config.volcengine.target_model}）"
         )
+
+    app_mode_options = [mode.value for mode in AppMode]
+    current_mode = str(st.session_state.get("app_mode", AppMode.VIDEO_PROMPT.value))
+    if current_mode not in app_mode_options:
+        current_mode = AppMode.VIDEO_PROMPT.value
+    selected_mode = st.selectbox(
+        "运行模式",
+        options=app_mode_options,
+        index=app_mode_options.index(current_mode),
+    )
+    st.session_state["app_mode"] = selected_mode
+    app_mode = AppMode(selected_mode)
 
     with st.expander("服务状态", expanded=True):
         checker = ParserClient(base_url=base_config.parser.base_url, timeout_seconds=5)
@@ -383,15 +405,31 @@ def main() -> None:
         st.session_state["default_user_prompt"] = default_user_prompt or ""
         st.success("DEFAULT_USER_PROMPT 已保存")
 
-    left, right = st.columns(2)
-    with left:
-        pid_text = st.text_area("pid 列表（每行一个）", height=220)
-        pid_total, pid_non_empty = _count_lines(pid_text)
-        st.caption(f"行数：{pid_total}（非空行：{pid_non_empty}）")
-    with right:
-        link_text = st.text_area("抖音链接列表（每行一个）", height=220)
-        link_total, link_non_empty = _count_lines(link_text)
-        st.caption(f"行数：{link_total}（非空行：{link_non_empty}）")
+    category_text = ""
+    if app_mode == AppMode.CATEGORY_ANALYSIS:
+        pid_col, link_col, category_col = st.columns(3)
+        with pid_col:
+            pid_text = st.text_area("pid 列表（每行一个）", height=220)
+            pid_total, pid_non_empty = _count_lines(pid_text)
+            st.caption(f"行数：{pid_total}（非空行：{pid_non_empty}）")
+        with link_col:
+            link_text = st.text_area("抖音链接列表（每行一个）", height=220)
+            link_total, link_non_empty = _count_lines(link_text)
+            st.caption(f"行数：{link_total}（非空行：{link_non_empty}）")
+        with category_col:
+            category_text = st.text_area("类目列表（每行一个）", height=220)
+            category_total, category_non_empty = _count_lines(category_text)
+            st.caption(f"行数：{category_total}（非空行：{category_non_empty}）")
+    else:
+        left, right = st.columns(2)
+        with left:
+            pid_text = st.text_area("pid 列表（每行一个）", height=220)
+            pid_total, pid_non_empty = _count_lines(pid_text)
+            st.caption(f"行数：{pid_total}（非空行：{pid_non_empty}）")
+        with right:
+            link_text = st.text_area("抖音链接列表（每行一个）", height=220)
+            link_total, link_non_empty = _count_lines(link_text)
+            st.caption(f"行数：{link_total}（非空行：{link_non_empty}）")
 
     table_placeholder = st.empty()
     status_placeholder = st.empty()
@@ -399,19 +437,32 @@ def main() -> None:
     if st.button("开始执行", type="primary"):
         pid_lines = pid_text.splitlines()
         link_lines = link_text.splitlines()
-        validation = InputValidator.validate_line_count(pid_lines, link_lines)
+
+        if app_mode == AppMode.CATEGORY_ANALYSIS:
+            category_lines = category_text.splitlines()
+            validation = InputValidator.validate_line_count_with_category(pid_lines, link_lines, category_lines)
+            inputs: list[TaskInput] = InputValidator.parse_lines_with_category(pid_text, link_text, category_text)
+        else:
+            validation = InputValidator.validate_line_count(pid_lines, link_lines)
+            inputs = InputValidator.parse_lines(pid_text, link_text)
+
         if not validation.is_valid:
             st.error(validation.error_message)
             st.stop()
 
-        inputs: list[TaskInput] = InputValidator.parse_lines(pid_text, link_text)
         invalid = [item for item in inputs if not item.is_valid]
         if invalid:
             st.warning(f"检测到 {len(invalid)} 条无效输入，将跳过处理")
             for item in invalid:
-                st.write(f"- pid={item.pid or '<空>'} link={item.link or '<空>'} error={item.error}")
+                if app_mode == AppMode.CATEGORY_ANALYSIS:
+                    st.write(
+                        f"- pid={item.pid or '<空>'} link={item.link or '<空>'} "
+                        f"category={item.category or '<空>'} error={item.error}"
+                    )
+                else:
+                    st.write(f"- pid={item.pid or '<空>'} link={item.link or '<空>'} error={item.error}")
 
-        tasks = [Task(pid=item.pid, original_link=item.link) for item in inputs if item.is_valid]
+        tasks = [Task(pid=item.pid, original_link=item.link, category=item.category) for item in inputs if item.is_valid]
         if not tasks:
             st.error("没有可执行的有效任务")
             st.stop()
@@ -429,7 +480,7 @@ def main() -> None:
             st.error(f"运行时配置无效: {exc}")
             st.stop()
 
-        _render_table(table_placeholder, tasks)
+        _render_table(table_placeholder, tasks, show_category=app_mode == AppMode.CATEGORY_ANALYSIS)
         status_placeholder.info("任务执行中...")
 
         asyncio.run(
@@ -439,41 +490,84 @@ def main() -> None:
                 default_user_prompt=default_user_prompt or "",
                 output_format=output_format,
                 tasks=tasks,
+                show_category=app_mode == AppMode.CATEGORY_ANALYSIS,
                 cache=cache,
                 table_placeholder=table_placeholder,
                 status_placeholder=status_placeholder,
-
             )
         )
 
         st.session_state["last_tasks"] = tasks
+        st.session_state["last_app_mode"] = app_mode.value
         st.session_state["last_default_user_prompt"] = default_user_prompt
         st.session_state["last_output_format"] = output_format
         status_placeholder.success("任务执行完成")
 
     if st.session_state.get("last_tasks"):
+        restore_tasks = st.session_state["last_tasks"]
+        last_mode_value = str(st.session_state.get("last_app_mode", AppMode.VIDEO_PROMPT.value))
+        try:
+            last_mode = AppMode(last_mode_value)
+        except ValueError:
+            last_mode = AppMode.VIDEO_PROMPT
+
+        is_category_mode = last_mode == AppMode.CATEGORY_ANALYSIS
+
         st.subheader("导出结果")
-        export_col, tip_col = st.columns([1, 3])
+        if is_category_mode:
+            excel_col, markdown_col, tip_col = st.columns([1, 1, 3])
+        else:
+            excel_col, tip_col = st.columns([1, 3])
+            markdown_col = None
+
         with tip_col:
             st.info("请尽快导出结果查看完整提示词，避免刷新后结果丢失，导出的 Excel 可直接导入 Lumen")
-        with export_col:
-            export_clicked = st.button("导出 Excel")
 
-        if export_clicked:
-            restore_tasks = st.session_state["last_tasks"]
+        with excel_col:
+            export_excel_clicked = st.button("导出 Excel")
+
+        export_markdown_clicked = False
+        if is_category_mode and markdown_col is not None:
+            with markdown_col:
+                export_markdown_clicked = st.button("导出 Markdown（按类目）")
+
+        if export_excel_clicked:
             exporter = ExcelExporter(template_path="docs/product_prompt_template.xlsx")
             output_dir = Path("exports")
             output_dir.mkdir(parents=True, exist_ok=True)
             output_file = output_dir / ExcelExporter.generate_filename()
-            exporter.export(tasks=restore_tasks, output_path=str(output_file))
+            exporter.export(
+                tasks=restore_tasks,
+                output_path=str(output_file),
+                include_category=is_category_mode,
+            )
             st.success(f"导出成功: {output_file}")
             with output_file.open("rb") as f:
                 st.download_button(
-                    label="下载导出文件",
+                    label="下载 Excel",
                     data=f.read(),
                     file_name=output_file.name,
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 )
+
+        if export_markdown_clicked:
+            markdown_exporter = MarkdownExporter(output_root="exports")
+            try:
+                result = markdown_exporter.export_by_category(tasks=restore_tasks)
+            except ValueError as exc:
+                st.warning(str(exc))
+            else:
+                st.success(
+                    f"Markdown 导出成功：{result.exported_category_count} 个类目，"
+                    f"{result.exported_task_count} 条视频脚本"
+                )
+                with result.zip_path.open("rb") as f:
+                    st.download_button(
+                        label="下载 Markdown ZIP",
+                        data=f.read(),
+                        file_name=result.zip_path.name,
+                        mime="application/zip",
+                    )
 
 
 if __name__ == "__main__":

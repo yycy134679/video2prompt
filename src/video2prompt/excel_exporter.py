@@ -15,11 +15,12 @@ class ExcelExporter:
 
     DOUYIN_LINK_HEADER = "抖音链接"
     CAN_TRANSLATE_HEADER = "能否翻译"
+    CATEGORY_HEADER = "类目"
 
     def __init__(self, template_path: str = "docs/product_prompt_template.xlsx"):
         self.template_path = template_path
 
-    def export(self, tasks: list[Task], output_path: str) -> None:
+    def export(self, tasks: list[Task], output_path: str, include_category: bool = False) -> None:
         template = Path(self.template_path)
         if not template.exists():
             raise FileNotFoundError(f"Excel 模板不存在: {self.template_path}")
@@ -47,6 +48,13 @@ class ExcelExporter:
             link_col = ws.max_column + 1
             ws.cell(row=1, column=link_col).value = self.DOUYIN_LINK_HEADER
 
+        category_col = None
+        if include_category:
+            category_col = headers.get(self.CATEGORY_HEADER)
+            if category_col is None:
+                category_col = ws.max_column + 1
+                ws.cell(row=1, column=category_col).value = self.CATEGORY_HEADER
+
         row = 2
         for task in tasks:
             if task.state not in {TaskState.COMPLETED, TaskState.FAILED, TaskState.CANCELLED} and not task.cache_hit:
@@ -57,6 +65,8 @@ class ExcelExporter:
             ws.cell(row=row, column=can_translate_col).value = task.can_translate
             ws.cell(row=row, column=prompt_col).value = task.gemini_output
             ws.cell(row=row, column=link_col).value = task.original_link
+            if category_col is not None:
+                ws.cell(row=row, column=category_col).value = task.category
             row += 1
 
         out = Path(output_path)

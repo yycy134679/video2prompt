@@ -20,6 +20,13 @@ class TaskState(str, Enum):
     CANCELLED = "已取消"
 
 
+class AppMode(str, Enum):
+    """应用运行模式。"""
+
+    VIDEO_PROMPT = "视频复刻提示词"
+    CATEGORY_ANALYSIS = "按类目分析"
+
+
 @dataclass
 class GeminiConfig:
     base_url: str = "https://api.huandutech.com"
@@ -122,6 +129,7 @@ class AppConfig:
 class TaskInput:
     pid: str
     link: str
+    category: str = ""
     is_valid: bool = True
     error: str = ""
 
@@ -132,6 +140,7 @@ class ValidationResult:
     error_message: str = ""
     pid_count: int = 0
     link_count: int = 0
+    category_count: int = 0
 
 
 @dataclass
@@ -157,6 +166,7 @@ class CachedResult:
 class Task:
     pid: str
     original_link: str
+    category: str = ""
     aweme_id: str = ""
     video_url: str = ""
     state: TaskState = TaskState.WAITING
