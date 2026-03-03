@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 from pathlib import Path
 from typing import Any
 
@@ -34,6 +35,8 @@ OUTPUT_FORMAT_LABEL_TO_VALUE = {
     "JSON": OUTPUT_FORMAT_JSON,
 }
 OUTPUT_FORMAT_VALUE_TO_LABEL = {value: label for label, value in OUTPUT_FORMAT_LABEL_TO_VALUE.items()}
+SESSION_EXCEL_DOWNLOAD = "excel_download_payload"
+SESSION_MARKDOWN_DOWNLOAD = "markdown_download_payload"
 
 
 def _task_to_row(task: Task) -> dict[str, Any]:
@@ -238,6 +241,10 @@ def main() -> None:
         st.session_state["output_format"] = OUTPUT_FORMAT_PLAIN_TEXT
     if "app_mode" not in st.session_state:
         st.session_state["app_mode"] = AppMode.VIDEO_PROMPT.value
+    if SESSION_EXCEL_DOWNLOAD not in st.session_state:
+        st.session_state[SESSION_EXCEL_DOWNLOAD] = None
+    if SESSION_MARKDOWN_DOWNLOAD not in st.session_state:
+        st.session_state[SESSION_MARKDOWN_DOWNLOAD] = None
 
     if base_config.provider == "gemini":
         st.caption(f"当前模型服务商：gemini（model={base_config.gemini.model}）")
@@ -435,6 +442,8 @@ def main() -> None:
     status_placeholder = st.empty()
 
     if st.button("开始执行", type="primary"):
+        st.session_state[SESSION_EXCEL_DOWNLOAD] = None
+        st.session_state[SESSION_MARKDOWN_DOWNLOAD] = None
         pid_lines = pid_text.splitlines()
         link_lines = link_text.splitlines()
 
@@ -512,6 +521,8 @@ def main() -> None:
             last_mode = AppMode.VIDEO_PROMPT
 
         is_category_mode = last_mode == AppMode.CATEGORY_ANALYSIS
+        if not is_category_mode:
+            st.session_state[SESSION_MARKDOWN_DOWNLOAD] = None
 
         st.subheader("导出结果")
         if is_category_mode:
@@ -541,33 +552,58 @@ def main() -> None:
                 output_path=str(output_file),
                 include_category=is_category_mode,
             )
+            st.session_state[SESSION_EXCEL_DOWNLOAD] = {
+                "data": output_file.read_bytes(),
+                "file_name": output_file.name,
+                "path": str(output_file.resolve()),
+            }
             st.success(f"导出成功: {output_file}")
-            with output_file.open("rb") as f:
-                st.download_button(
-                    label="下载 Excel",
-                    data=f.read(),
-                    file_name=output_file.name,
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                )
 
         if export_markdown_clicked:
             markdown_exporter = MarkdownExporter(output_root="exports")
             try:
                 result = markdown_exporter.export_by_category(tasks=restore_tasks)
             except ValueError as exc:
+                st.session_state[SESSION_MARKDOWN_DOWNLOAD] = None
                 st.warning(str(exc))
             else:
+                st.session_state[SESSION_MARKDOWN_DOWNLOAD] = {
+                    "data": result.zip_path.read_bytes(),
+                    "file_name": result.zip_path.name,
+                    "path": str(result.zip_path.resolve()),
+                }
                 st.success(
                     f"Markdown 导出成功：{result.exported_category_count} 个类目，"
                     f"{result.exported_task_count} 条视频脚本"
                 )
-                with result.zip_path.open("rb") as f:
-                    st.download_button(
-                        label="下载 Markdown ZIP",
-                        data=f.read(),
-                        file_name=result.zip_path.name,
-                        mime="application/zip",
-                    )
+
+        excel_download_payload = st.session_state.get(SESSION_EXCEL_DOWNLOAD)
+        if excel_download_payload:
+            excel_key_suffix = hashlib.sha1(excel_download_payload["data"]).hexdigest()[:12]
+            with excel_col:
+                st.download_button(
+                    label="下载 Excel",
+                    data=excel_download_payload["data"],
+                    file_name=excel_download_payload["file_name"],
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    on_click="ignore",
+                    key=f"download_excel_file_{excel_key_suffix}",
+                )
+            st.caption(f"下载失败可直接使用本地文件：`{excel_download_payload['path']}`")
+
+        markdown_download_payload = st.session_state.get(SESSION_MARKDOWN_DOWNLOAD)
+        if is_category_mode and markdown_col is not None and markdown_download_payload:
+            markdown_key_suffix = hashlib.sha1(markdown_download_payload["data"]).hexdigest()[:12]
+            with markdown_col:
+                st.download_button(
+                    label="下载 Markdown ZIP",
+                    data=markdown_download_payload["data"],
+                    file_name=markdown_download_payload["file_name"],
+                    mime="application/zip",
+                    on_click="ignore",
+                    key=f"download_markdown_zip_{markdown_key_suffix}",
+                )
+            st.caption(f"下载失败可直接使用本地文件：`{markdown_download_payload['path']}`")
 
 
 if __name__ == "__main__":

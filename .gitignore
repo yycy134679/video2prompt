@@ -13,3 +13,4 @@ cache.db
 /logs/
 *.xlsx
 !docs/product_prompt_template.xlsx
+/exports/
