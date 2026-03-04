@@ -3,6 +3,18 @@ from __future__ import annotations
 from video2prompt.validator import InputValidator
 
 
+def test_validate_link_support_tiktok_and_douyin_domains() -> None:
+    assert InputValidator.validate_link("https://www.tiktok.com/@user/video/123")
+    assert InputValidator.validate_link("https://vm.tiktok.com/ZM123/")
+    assert InputValidator.validate_link("www.tiktok.com/@user/video/123")
+    assert InputValidator.validate_link("https://www.douyin.com/video/1")
+    assert InputValidator.validate_link("https://v.douyin.com/abcd/")
+
+
+def test_validate_link_reject_other_domains() -> None:
+    assert not InputValidator.validate_link("https://example.com/video/1")
+
+
 def test_validate_line_count_with_category_allow_empty_category_cell() -> None:
     pid_lines = ["p1", "p2"]
     link_lines = ["https://www.douyin.com/video/1", "https://www.douyin.com/video/2"]
@@ -52,5 +64,5 @@ def test_parse_lines_with_category_keep_invalid_item() -> None:
 
     assert len(items) == 1
     assert not items[0].is_valid
-    assert items[0].error == "无效抖音链接"
+    assert items[0].error == InputValidator.INVALID_LINK_ERROR
     assert items[0].category == InputValidator.UNCATEGORIZED

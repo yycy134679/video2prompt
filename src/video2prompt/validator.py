@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+from urllib.parse import urlparse
+
 from .models import TaskInput, ValidationResult
 
 
 class InputValidator:
     """输入校验器。"""
 
-    VALID_DOMAINS = ("douyin", "iesdouyin")
+    VALID_DOMAINS = ("douyin.com", "iesdouyin.com", "tiktok.com")
+    INVALID_LINK_ERROR = "无效抖音/TikTok 链接"
     UNCATEGORIZED = "未分类"
 
     @staticmethod
@@ -30,7 +33,7 @@ class InputValidator:
                 continue
 
             if not InputValidator.validate_link(link):
-                items.append(TaskInput(pid=pid, link=link, is_valid=False, error="无效抖音链接"))
+                items.append(TaskInput(pid=pid, link=link, is_valid=False, error=InputValidator.INVALID_LINK_ERROR))
                 continue
 
             items.append(TaskInput(pid=pid, link=link, is_valid=True))
@@ -39,8 +42,20 @@ class InputValidator:
 
     @staticmethod
     def validate_link(link: str) -> bool:
-        lower = link.lower()
-        return any(domain in lower for domain in InputValidator.VALID_DOMAINS)
+        raw = (link or "").strip()
+        if not raw:
+            return False
+
+        # 允许用户输入不带 schema 的链接，统一补齐后做域名校验。
+        normalized = raw if "://" in raw else f"https://{raw}"
+        parsed = urlparse(normalized)
+        if parsed.scheme and parsed.scheme not in ("http", "https"):
+            return False
+        host = (parsed.hostname or "").lower().strip(".")
+        if not host:
+            return False
+
+        return any(host == domain or host.endswith(f".{domain}") for domain in InputValidator.VALID_DOMAINS)
 
     @staticmethod
     def validate_line_count(pid_lines: list[str], link_lines: list[str]) -> ValidationResult:
@@ -90,7 +105,7 @@ class InputValidator:
                         link=link,
                         category=category or InputValidator.UNCATEGORIZED,
                         is_valid=False,
-                        error="无效抖音链接",
+                        error=InputValidator.INVALID_LINK_ERROR,
                     )
                 )
                 continue

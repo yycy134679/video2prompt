@@ -420,7 +420,7 @@ def main() -> None:
             pid_total, pid_non_empty = _count_lines(pid_text)
             st.caption(f"行数：{pid_total}（非空行：{pid_non_empty}）")
         with link_col:
-            link_text = st.text_area("抖音链接列表（每行一个）", height=220)
+            link_text = st.text_area("抖音/TikTok 链接列表（每行一个）", height=220)
             link_total, link_non_empty = _count_lines(link_text)
             st.caption(f"行数：{link_total}（非空行：{link_non_empty}）")
         with category_col:
@@ -434,7 +434,7 @@ def main() -> None:
             pid_total, pid_non_empty = _count_lines(pid_text)
             st.caption(f"行数：{pid_total}（非空行：{pid_non_empty}）")
         with right:
-            link_text = st.text_area("抖音链接列表（每行一个）", height=220)
+            link_text = st.text_area("抖音/TikTok 链接列表（每行一个）", height=220)
             link_total, link_non_empty = _count_lines(link_text)
             st.caption(f"行数：{link_total}（非空行：{link_non_empty}）")
 

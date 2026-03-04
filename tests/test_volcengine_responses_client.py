@@ -14,7 +14,9 @@ def test_create_response_with_file_id_success() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.url.path == "/api/v3/responses"
         payload = json.loads(request.content.decode("utf-8"))
-        assert payload["reasoning_effort"] == "high"
+        assert "reasoning_effort" not in payload
+        assert payload["reasoning"]["effort"] == "high"
+        assert payload["max_output_tokens"] == 512
         return httpx.Response(
             status_code=200,
             headers={"x-request-id": "req-resp-1"},
@@ -39,6 +41,7 @@ def test_create_response_with_file_id_success() -> None:
                 endpoint_id="ep-test",
                 api_key="k",
                 reasoning_effort="high",
+                max_completion_tokens=512,
                 http_client=http_client,
             )
             text = await client.create_response_with_file_id("file-123", "请分析视频")

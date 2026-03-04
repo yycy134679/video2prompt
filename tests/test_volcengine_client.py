@@ -166,3 +166,17 @@ def test_volcengine_429_is_retryable() -> None:
         asyncio.run(_run())
     assert "RequestBurstTooFast" in str(exc_info.value)
     assert "req-burst-1" in str(exc_info.value)
+
+
+def test_volcengine_identify_video_fetch_timeout_error() -> None:
+    client = VolcengineClient(
+        base_url="https://ark.cn-beijing.volces.com/api/v3",
+        endpoint_id="ep-test",
+        target_model="seed-2.0-lite",
+        api_key="x",
+    )
+    message = (
+        "火山状态码 400: code=InvalidParameter | "
+        "Timeout while connecting: https://v16m-default.tiktokcdn.com/xxx.mp4"
+    )
+    assert client.is_video_fetch_error_message(message)

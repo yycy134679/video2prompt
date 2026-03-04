@@ -7,7 +7,7 @@ from dataclasses import dataclass
 import pytest
 
 from video2prompt.circuit_breaker import CircuitBreaker
-from video2prompt.errors import GeminiRetryableError
+from video2prompt.errors import GeminiError, GeminiRetryableError
 from video2prompt.models import (
     AppConfig,
     ParseResult,
@@ -53,6 +53,7 @@ class _StubParser:
 class _RetryModel:
     errors: list[Exception]
     output: str = "ok"
+    fetch_error: bool = False
     calls: int = 0
 
     async def interpret_video(
@@ -70,7 +71,7 @@ class _RetryModel:
 
     def is_video_fetch_error_message(self, message: str) -> bool:
         del message
-        return False
+        return self.fetch_error
 
     def consume_last_observation(self) -> dict[str, int | str]:
         return {
@@ -238,6 +239,33 @@ def test_large_video_switches_to_responses_file() -> None:
     assert task.model_api_mode == "responses"
     assert task.gemini_output == "responses-ok"
     assert model.calls == 0
+
+
+def test_chat_fetch_timeout_auto_fallback_to_responses_file() -> None:
+    model = _RetryModel(
+        errors=[GeminiError("火山状态码 400: code=InvalidParameter | Timeout while connecting: https://v16m.tiktokcdn.com/x.mp4")],
+        output="chat-should-not-run",
+        fetch_error=True,
+    )
+    files_client = _StubFilesClient()
+    responses_client = _StubResponsesClient()
+    scheduler = _make_scheduler(
+        model,
+        _make_volc_config(input_mode="auto", chat_video_size_limit_mb=50, files_video_size_limit_mb=512),
+        files_client=files_client,
+        responses_client=responses_client,
+    )
+    task = Task(pid="4", original_link="https://example.com/share/4")
+
+    async def _run() -> None:
+        scheduler._probe_video_size_mb = _async_return(10.0)  # type: ignore[method-assign]
+        await scheduler.execute_task(task, asyncio.Semaphore(1), cancel_event=asyncio.Event())
+
+    asyncio.run(_run())
+    assert task.state.value == "完成"
+    assert task.model_api_mode == "responses"
+    assert task.gemini_output == "responses-ok"
+    assert model.calls == 1
 
 
 def _async_return(value):

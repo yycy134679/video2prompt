@@ -7,7 +7,6 @@ import tempfile
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any
 
 import httpx
 
@@ -88,7 +87,8 @@ class VolcengineFilesClient:
                 resp = await client.post(
                     url,
                     headers=headers,
-                    data={"expire_at": str(expire_at)},
+                    # 火山 Files API 要求 purpose=user_data，否则会返回 InvalidParameter。
+                    data={"expire_at": str(expire_at), "purpose": "user_data"},
                     files={"file": (file_name, f, "video/mp4")},
                 )
             if resp.status_code in {429, 500, 502, 503, 504}:
@@ -181,4 +181,3 @@ async def asyncio_sleep(seconds: float) -> None:
     import asyncio
 
     await asyncio.sleep(seconds)
-

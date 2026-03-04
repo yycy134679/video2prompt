@@ -67,9 +67,9 @@ class VolcengineResponsesClient:
         if self.thinking_type in {"enabled", "disabled", "auto"}:
             body["thinking"] = {"type": self.thinking_type}
         if self.thinking_type != "disabled" and self.reasoning_effort in {"minimal", "low", "medium", "high"}:
-            body["reasoning_effort"] = self.reasoning_effort
+            body["reasoning"] = {"effort": self.reasoning_effort}
         if self.max_completion_tokens is not None:
-            body["max_completion_tokens"] = int(self.max_completion_tokens)
+            body["max_output_tokens"] = int(self.max_completion_tokens)
 
         try:
             resp = await client.post(url, headers=headers, json=body)

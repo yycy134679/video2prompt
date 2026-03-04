@@ -357,6 +357,10 @@ class TaskScheduler:
                     self.logger.warning("模型可重试错误: %s", exc)
 
                 if is_fetch_error and api_mode == "chat":
+                    switched = await self._try_fallback_chat_to_responses(task, message=message)
+                    if switched:
+                        api_mode = "responses"
+                        continue
                     self.logger.info("检测到视频资源拉取失败，尝试重新解析直链")
                     await self._reparse_video_url(task)
 
@@ -377,7 +381,8 @@ class TaskScheduler:
                     extra_delay_seconds=extra_delay,
                 )
             except GeminiError as exc:
-                is_fetch_error = self.model_client.is_video_fetch_error_message(str(exc))
+                message = str(exc)
+                is_fetch_error = self.model_client.is_video_fetch_error_message(message)
                 if is_fetch_error:
                     self.logger.error("模型不可重试错误（视频直链访问失败，不计入熔断）: %s", exc)
                 else:
@@ -385,10 +390,18 @@ class TaskScheduler:
                     self.logger.error("模型不可重试错误: %s", exc)
 
                 if is_fetch_error and api_mode == "chat":
+                    switched = await self._try_fallback_chat_to_responses(task, message=message)
+                    if switched:
+                        api_mode = "responses"
+                        continue
                     try:
                         await self._reparse_video_url(task)
                     except Exception as reparse_exc:  # noqa: BLE001
                         raise GeminiError(f"模型失败，且重解析失败: {reparse_exc}") from exc
+                    if attempt >= max_attempts:
+                        raise GeminiError(f"模型重试耗尽: {exc}") from exc
+                    await self._backoff_wait("gemini", attempt, on_update=on_update, task=task)
+                    continue
                 if self.gemini_breaker.is_tripped():
                     self._trip_circuit("模型服务熔断")
                 raise
@@ -568,6 +581,30 @@ class TaskScheduler:
         result = await self.parser.parse_video(task.original_link)
         task.aweme_id = result.aweme_id
         task.video_url = result.video_url
+
+    async def _try_fallback_chat_to_responses(self, task: Task, message: str) -> bool:
+        if self.config.provider != "volcengine":
+            return False
+        input_mode = (self.config.volcengine.input_mode or "auto").strip().lower()
+        if input_mode != "auto":
+            return False
+        if self.volcengine_files_client is None or self.volcengine_responses_client is None:
+            return False
+
+        size_mb = await self._probe_video_size_mb(task.video_url)
+        files_limit = float(self.config.volcengine.files_video_size_limit_mb)
+        if size_mb is not None and size_mb > files_limit:
+            self.logger.warning(
+                "视频直链访问失败且无法回退 responses_file：文件过大 %.1f MiB > %.1f MiB, err=%s",
+                size_mb,
+                files_limit,
+                message,
+            )
+            return False
+
+        task.model_api_mode = "responses"
+        self.logger.info("检测到 Chat URL 拉取失败，自动回退 responses_file 重试")
+        return True
 
     async def _backoff_wait(
         self,

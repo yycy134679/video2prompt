@@ -33,11 +33,12 @@ def test_download_video_to_temp_over_limit(tmp_path: Path) -> None:
 def test_upload_file_success(tmp_path: Path) -> None:
     sample = tmp_path / "sample.mp4"
     sample.write_bytes(b"fake-mp4")
-    captured: dict[str, str] = {}
+    captured: dict[str, str | bytes] = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
         captured["path"] = request.url.path
         captured["method"] = request.method
+        captured["body"] = request.content
         return httpx.Response(status_code=200, json={"id": "file-123"})
 
     async def _run() -> str:
@@ -54,6 +55,10 @@ def test_upload_file_success(tmp_path: Path) -> None:
     assert file_id == "file-123"
     assert captured["method"] == "POST"
     assert captured["path"] == "/api/v3/files"
+    body = captured["body"]
+    assert isinstance(body, bytes)
+    assert b'name="purpose"' in body
+    assert b"user_data" in body
 
 
 def test_poll_file_ready_timeout() -> None:
@@ -89,4 +94,3 @@ def test_delete_file_best_effort() -> None:
             await client.delete_file("file-123")
 
     asyncio.run(_run())
-
