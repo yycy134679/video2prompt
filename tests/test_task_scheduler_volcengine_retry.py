@@ -173,8 +173,9 @@ def test_request_burst_too_fast_uses_penalty_backoff() -> None:
         on_update: Callable | None = None,
         task: Task | None = None,
         extra_delay_seconds: float = 0.0,
+        cancel_event: asyncio.Event | None = None,
     ) -> None:
-        del service, attempt, on_update, task
+        del service, attempt, on_update, task, cancel_event
         calls.append(extra_delay_seconds)
         return None
 
@@ -202,8 +203,9 @@ def test_server_overloaded_uses_normal_backoff() -> None:
         on_update: Callable | None = None,
         task: Task | None = None,
         extra_delay_seconds: float = 0.0,
+        cancel_event: asyncio.Event | None = None,
     ) -> None:
-        del service, attempt, on_update, task
+        del service, attempt, on_update, task, cancel_event
         calls.append(extra_delay_seconds)
         return None
 

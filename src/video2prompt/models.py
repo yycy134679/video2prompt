@@ -10,7 +10,7 @@ from enum import Enum
 class TaskState(str, Enum):
     """任务状态枚举。"""
 
-    WAITING = "等待中"
+    WAITING = "待解析"
     PARSING = "解析中"
     INTERVAL = "等待间隔"
     INTERPRETING = "模型解读中"

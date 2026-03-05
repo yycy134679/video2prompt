@@ -5,7 +5,7 @@ import time
 
 from video2prompt.circuit_breaker import CircuitBreaker
 from video2prompt.errors import ParserRetryableError
-from video2prompt.models import AppConfig, ParseResult, ParserConfig, RetryConfig, Task, TaskConfig
+from video2prompt.models import AppConfig, ParseResult, ParserConfig, RetryConfig, Task, TaskConfig, TaskState
 from video2prompt.task_scheduler import TaskScheduler
 
 
@@ -90,6 +90,64 @@ class _AlwaysRetryableParser:
         del url
         self.calls += 1
         raise ParserRetryableError("always fail")
+
+
+class _HoldFirstParser:
+    def __init__(self) -> None:
+        self._calls = 0
+        self.first_started = asyncio.Event()
+        self.release_first = asyncio.Event()
+
+    async def parse_video(self, url: str) -> ParseResult:
+        self._calls += 1
+        if self._calls == 1:
+            self.first_started.set()
+            await self.release_first.wait()
+        return ParseResult(aweme_id=f"aweme-{url}", video_url=f"https://example.com/{url}.mp4", raw_data={})
+
+
+class _CancelAwareParser:
+    def __init__(self) -> None:
+        self._calls = 0
+        self.second_started = asyncio.Event()
+
+    async def parse_video(self, url: str) -> ParseResult:
+        self._calls += 1
+        if self._calls == 2:
+            self.second_started.set()
+            await asyncio.sleep(60)
+        return ParseResult(aweme_id=f"aweme-{url}", video_url=f"https://example.com/{url}.mp4", raw_data={})
+
+
+class _BlockingModel:
+    def __init__(self) -> None:
+        self.started = asyncio.Event()
+
+    async def interpret_video(
+        self,
+        video_uri: str,
+        user_prompt: str,
+        fps: float,
+        fps_fallback: float | None = None,
+    ) -> tuple[str, float]:
+        del video_uri, user_prompt, fps_fallback
+        self.started.set()
+        await asyncio.sleep(60)
+        return "ok", fps
+
+    def is_video_fetch_error_message(self, message: str) -> bool:
+        del message
+        return False
+
+    def consume_last_observation(self) -> dict[str, int | str]:
+        return {
+            "prompt_tokens": 1,
+            "completion_tokens": 1,
+            "reasoning_tokens": 0,
+            "cached_tokens": 0,
+            "request_id": "req-1",
+            "api_mode": "chat",
+        }
 
 
 def _make_scheduler(parser, config: AppConfig) -> TaskScheduler:  # noqa: ANN001
@@ -182,8 +240,9 @@ def test_parser_retry_is_limited_to_two_retries() -> None:
         on_update=None,  # noqa: ANN001
         task=None,  # noqa: ANN001
         extra_delay_seconds: float = 0.0,
+        cancel_event=None,  # noqa: ANN001
     ):
-        del service, attempt, on_update, task, extra_delay_seconds
+        del service, attempt, on_update, task, extra_delay_seconds, cancel_event
         return None
 
     scheduler._backoff_wait = _fake_backoff  # type: ignore[method-assign]
@@ -217,3 +276,69 @@ def test_backoff_sleep_hard_cap_30_seconds(monkeypatch) -> None:  # noqa: ANN001
     asyncio.run(_run())
 
     assert sleeps == [30.0]
+
+
+def test_only_active_parser_slot_shows_parsing() -> None:
+    parser = _HoldFirstParser()
+    scheduler = _make_scheduler(
+        parser,
+        _base_config(concurrency=1, cooldown_seconds=0.0, parser_backoff=[1]),
+    )
+    task_a = Task(pid="1", original_link="a")
+    task_b = Task(pid="2", original_link="b")
+
+    async def _run() -> None:
+        cancel_event = asyncio.Event()
+        runner = asyncio.create_task(scheduler.run(tasks=[task_a, task_b], user_prompt="prompt", cancel_event=cancel_event))
+        await parser.first_started.wait()
+        await asyncio.sleep(0.02)
+        assert task_a.state == TaskState.PARSING
+        assert task_b.state == TaskState.WAITING
+        parser.release_first.set()
+        await runner
+
+    asyncio.run(_run())
+
+    assert task_a.state == TaskState.COMPLETED
+    assert task_b.state == TaskState.COMPLETED
+
+
+def test_cancel_event_stops_waiting_parsing_and_interpreting_tasks() -> None:
+    parser = _CancelAwareParser()
+    model = _BlockingModel()
+    config = _base_config(concurrency=2, cooldown_seconds=0.0, parser_backoff=[1])
+    parser_breaker = CircuitBreaker(consecutive_threshold=20, rate_threshold=1.0, window_seconds=60)
+    gemini_breaker = CircuitBreaker(consecutive_threshold=20, rate_threshold=1.0, window_seconds=60)
+    scheduler = TaskScheduler(
+        parser=parser,
+        model_client=model,
+        cache=_StubCache(),
+        config=config,
+        parser_breaker=parser_breaker,
+        gemini_breaker=gemini_breaker,
+    )
+    task_interpreting = Task(pid="1", original_link="a")
+    task_parsing = Task(pid="2", original_link="b")
+    task_waiting = Task(pid="3", original_link="c")
+
+    async def _run() -> None:
+        cancel_event = asyncio.Event()
+        started = time.monotonic()
+        runner = asyncio.create_task(
+            scheduler.run(
+                tasks=[task_interpreting, task_parsing, task_waiting],
+                user_prompt="prompt",
+                cancel_event=cancel_event,
+            )
+        )
+        await model.started.wait()
+        await parser.second_started.wait()
+        cancel_event.set()
+        await asyncio.wait_for(runner, timeout=2)
+        assert time.monotonic() - started < 2
+
+    asyncio.run(_run())
+
+    assert task_interpreting.state == TaskState.CANCELLED
+    assert task_parsing.state == TaskState.CANCELLED
+    assert task_waiting.state == TaskState.CANCELLED

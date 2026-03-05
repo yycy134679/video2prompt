@@ -13,6 +13,7 @@
 - **弹性容错**：重试退避 + 熔断器 + 限流慢启动 + 视频拉取失败自动重解析
 - **高并发解析节奏**：支持 50 解析槽位，单槽位解析完成后冷却 3 秒再接下一条
 - **实时状态**：Streamlit 界面实时显示每条任务的状态、重试次数、耗时、Token 用量
+- **可中断执行**：运行中支持一键停止，立即取消待解析/解析中/模型解读中任务
 - **多格式导出**：支持 Excel 导出，也支持按类目导出 Markdown 并打包 ZIP 下载
 
 ## 前置条件
@@ -26,12 +27,8 @@
 ### 1. 安装依赖
 
 ```bash
-pip install -e .
-```
-
-开发环境（含测试工具）：
-
-```bash
+python3 -m venv .venv
+source .venv/bin/activate
 pip install -e ".[dev]"
 ```
 
@@ -68,10 +65,12 @@ bash scripts/start.sh
 3. 编辑或加载 **提示词**（DEFAULT_USER_PROMPT），可持久化保存
 4. 选择**输出格式**：纯文本（保留模型原始输出）或 JSON（结构化解析为"能否翻译 + 信息摘要"）
 5. 按需调整**运行时配置**（并发数、帧率、退避序列、熔断阈值等），仅本次运行生效
-6. 点击 **开始执行**，实时查看任务进度
-7. 执行完成后：
+6. 点击 **开始执行**，实时查看任务进度（未真正进入解析槽位的任务显示为「待解析」）
+7. 如需提前终止，点击 **停止**：会取消待解析、解析中、模型解读中的未完成任务
+8. 执行完成或停止后：
    - 默认模式：导出 Excel
    - 按类目分析：可导出 Excel（含类目列）或导出 Markdown（按类目 ZIP）
+   - 导出仅包含已完成且有模型输出的任务
 
 ## 项目结构
 
@@ -192,6 +191,10 @@ WAITING → PARSING → INTERVAL → INTERPRETING → COMPLETED
                                              → CANCELLED
 ```
 
+- `WAITING`：待解析（尚未占用解析槽位）
+- `PARSING`：解析中（已实际发起解析请求）
+- `INTERPRETING`：模型解读中
+
 每次状态变更通过回调实时刷新 UI 表格，展示以下信息：
 
 | 字段                              | 说明                           |
@@ -211,6 +214,7 @@ WAITING → PARSING → INTERVAL → INTERPRETING → COMPLETED
 ### 运行测试
 
 ```bash
+source .venv/bin/activate
 pytest
 ```
 

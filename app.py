@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import hashlib
+import threading
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -37,6 +40,25 @@ OUTPUT_FORMAT_LABEL_TO_VALUE = {
 OUTPUT_FORMAT_VALUE_TO_LABEL = {value: label for label, value in OUTPUT_FORMAT_LABEL_TO_VALUE.items()}
 SESSION_EXCEL_DOWNLOAD = "excel_download_payload"
 SESSION_MARKDOWN_DOWNLOAD = "markdown_download_payload"
+SESSION_RUN_CONTROLLER = "run_controller"
+
+
+@dataclass
+class RunController:
+    tasks: list[Task]
+    show_category: bool
+    app_mode_value: str
+    default_user_prompt: str
+    output_format: str
+    running: bool = False
+    finished: bool = False
+    stop_requested: bool = False
+    cancelled: bool = False
+    error_message: str = ""
+    loop: asyncio.AbstractEventLoop | None = None
+    cancel_event: asyncio.Event | None = None
+    thread: threading.Thread | None = None
+    lock: threading.Lock = field(default_factory=threading.Lock)
 
 
 def _task_to_row(task: Task) -> dict[str, Any]:
@@ -101,10 +123,10 @@ async def _run_scheduler(
     default_user_prompt: str,
     output_format: str,
     tasks: list[Task],
-    show_category: bool,
     cache: CacheStore,
-    table_placeholder,
-    status_placeholder,
+    logger,
+    cancel_event: asyncio.Event,
+    on_update=None,
 ):
     parser_http = httpx.AsyncClient(timeout=config.parser.timeout_seconds)
     model_timeout = config.gemini.timeout_seconds if config.provider == "gemini" else config.volcengine.timeout_seconds
@@ -188,16 +210,11 @@ async def _run_scheduler(
         config=config,
         parser_breaker=parser_breaker,
         gemini_breaker=gemini_breaker,
-        logger=st.session_state["logger"],
+        logger=logger,
         volcengine_files_client=volc_files_client,
         volcengine_responses_client=volc_responses_client,
         volcengine_batch_client=volc_batch_client,
     )
-
-    cancel_event = asyncio.Event()
-
-    def on_update(_: Task) -> None:
-        _render_table(table_placeholder, tasks, show_category=show_category)
 
     try:
         await scheduler.run(
@@ -210,6 +227,156 @@ async def _run_scheduler(
     finally:
         await parser_http.aclose()
         await model_http.aclose()
+
+
+def _get_run_controller() -> RunController | None:
+    controller = st.session_state.get(SESSION_RUN_CONTROLLER)
+    if isinstance(controller, RunController):
+        return controller
+    return None
+
+
+def _sync_run_controller_state(controller: RunController | None) -> None:
+    if controller is None or controller.thread is None:
+        return
+    if controller.thread.is_alive():
+        return
+    with controller.lock:
+        controller.running = False
+        controller.finished = True
+        controller.loop = None
+        controller.cancel_event = None
+
+
+def _is_run_active(controller: RunController | None) -> bool:
+    if controller is None:
+        return False
+    _sync_run_controller_state(controller)
+    with controller.lock:
+        return bool(controller.running)
+
+
+def _request_stop(controller: RunController) -> None:
+    with controller.lock:
+        controller.stop_requested = True
+        loop = controller.loop
+        cancel_event = controller.cancel_event
+    if loop is not None and cancel_event is not None and not cancel_event.is_set():
+        loop.call_soon_threadsafe(cancel_event.set)
+
+
+def _scheduler_thread_entry(
+    controller: RunController,
+    config,
+    api_key: str,
+    default_user_prompt: str,
+    output_format: str,
+    cache: CacheStore,
+    logger,
+) -> None:
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    cancel_event = asyncio.Event()
+    with controller.lock:
+        controller.loop = loop
+        controller.cancel_event = cancel_event
+        controller.running = True
+        controller.finished = False
+        controller.error_message = ""
+
+    if controller.stop_requested:
+        cancel_event.set()
+
+    try:
+        loop.run_until_complete(
+            _run_scheduler(
+                config=config,
+                api_key=api_key,
+                default_user_prompt=default_user_prompt,
+                output_format=output_format,
+                tasks=controller.tasks,
+                cache=cache,
+                logger=logger,
+                cancel_event=cancel_event,
+            )
+        )
+    except BaseException as exc:  # noqa: BLE001
+        if not isinstance(exc, asyncio.CancelledError):
+            with controller.lock:
+                controller.error_message = str(exc)
+    finally:
+        with controller.lock:
+            controller.running = False
+            controller.finished = True
+            controller.cancelled = cancel_event.is_set()
+            controller.loop = None
+            controller.cancel_event = None
+        with contextlib.suppress(Exception):
+            pending = asyncio.all_tasks(loop)
+            for pending_task in pending:
+                pending_task.cancel()
+            if pending:
+                loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+        loop.close()
+
+
+def _resolve_last_mode() -> AppMode:
+    last_mode_value = str(st.session_state.get("last_app_mode", AppMode.VIDEO_PROMPT.value))
+    try:
+        return AppMode(last_mode_value)
+    except ValueError:
+        return AppMode.VIDEO_PROMPT
+
+
+def _render_runtime_panel(controller: RunController | None) -> None:
+    refresh_interval = 1.0 if _is_run_active(controller) else None
+
+    @st.fragment(run_every=refresh_interval)
+    def _panel() -> None:
+        current_controller = _get_run_controller()
+        _sync_run_controller_state(current_controller)
+
+        tasks_to_render = None
+        show_category = False
+        if current_controller is not None and current_controller.tasks:
+            tasks_to_render = current_controller.tasks
+            show_category = current_controller.show_category
+        elif st.session_state.get("last_tasks"):
+            tasks_to_render = st.session_state["last_tasks"]
+            show_category = _resolve_last_mode() == AppMode.CATEGORY_ANALYSIS
+
+        if tasks_to_render:
+            _render_table(st, tasks_to_render, show_category=show_category)
+
+        if current_controller is None:
+            return
+
+        with current_controller.lock:
+            running = current_controller.running
+            stop_requested = current_controller.stop_requested
+            finished = current_controller.finished
+            cancelled = current_controller.cancelled
+            error_message = current_controller.error_message
+
+        if running:
+            if stop_requested:
+                st.warning("停止中，正在取消解析与模型任务...")
+            else:
+                st.info("任务执行中...")
+            return
+
+        if error_message:
+            st.error(f"任务执行失败: {error_message}")
+            return
+
+        if finished and (cancelled or stop_requested):
+            st.warning("任务已停止，未完成任务已标记为已取消")
+            return
+
+        if finished:
+            st.success("任务执行完成")
+
+    _panel()
 
 
 def main() -> None:
@@ -438,10 +605,21 @@ def main() -> None:
             link_total, link_non_empty = _count_lines(link_text)
             st.caption(f"行数：{link_total}（非空行：{link_non_empty}）")
 
-    table_placeholder = st.empty()
-    status_placeholder = st.empty()
+    run_controller = _get_run_controller()
+    _sync_run_controller_state(run_controller)
+    is_running = _is_run_active(run_controller)
 
-    if st.button("开始执行", type="primary"):
+    start_col, stop_col = st.columns(2)
+    with start_col:
+        start_clicked = st.button("开始执行", type="primary", disabled=is_running)
+    with stop_col:
+        stop_clicked = st.button("停止", disabled=not is_running)
+
+    if stop_clicked and run_controller is not None:
+        _request_stop(run_controller)
+        st.rerun()
+
+    if start_clicked:
         st.session_state[SESSION_EXCEL_DOWNLOAD] = None
         st.session_state[SESSION_MARKDOWN_DOWNLOAD] = None
         pid_lines = pid_text.splitlines()
@@ -489,36 +667,48 @@ def main() -> None:
             st.error(f"运行时配置无效: {exc}")
             st.stop()
 
-        _render_table(table_placeholder, tasks, show_category=app_mode == AppMode.CATEGORY_ANALYSIS)
-        status_placeholder.info("任务执行中...")
-
-        asyncio.run(
-            _run_scheduler(
-                config=runtime_config,
-                api_key=api_key,
-                default_user_prompt=default_user_prompt or "",
-                output_format=output_format,
-                tasks=tasks,
-                show_category=app_mode == AppMode.CATEGORY_ANALYSIS,
-                cache=cache,
-                table_placeholder=table_placeholder,
-                status_placeholder=status_placeholder,
-            )
+        controller = RunController(
+            tasks=tasks,
+            show_category=app_mode == AppMode.CATEGORY_ANALYSIS,
+            app_mode_value=app_mode.value,
+            default_user_prompt=default_user_prompt or "",
+            output_format=output_format,
+            running=True,
+            finished=False,
+            stop_requested=False,
         )
+        worker = threading.Thread(
+            target=_scheduler_thread_entry,
+            kwargs={
+                "controller": controller,
+                "config": runtime_config,
+                "api_key": api_key,
+                "default_user_prompt": default_user_prompt or "",
+                "output_format": output_format,
+                "cache": cache,
+                "logger": logger,
+            },
+            daemon=True,
+        )
+        controller.thread = worker
 
         st.session_state["last_tasks"] = tasks
         st.session_state["last_app_mode"] = app_mode.value
         st.session_state["last_default_user_prompt"] = default_user_prompt
         st.session_state["last_output_format"] = output_format
-        status_placeholder.success("任务执行完成")
+        st.session_state[SESSION_RUN_CONTROLLER] = controller
 
-    if st.session_state.get("last_tasks"):
+        worker.start()
+        st.rerun()
+
+    run_controller = _get_run_controller()
+    _render_runtime_panel(run_controller)
+
+    run_controller = _get_run_controller()
+    _sync_run_controller_state(run_controller)
+    if st.session_state.get("last_tasks") and not _is_run_active(run_controller):
         restore_tasks = st.session_state["last_tasks"]
-        last_mode_value = str(st.session_state.get("last_app_mode", AppMode.VIDEO_PROMPT.value))
-        try:
-            last_mode = AppMode(last_mode_value)
-        except ValueError:
-            last_mode = AppMode.VIDEO_PROMPT
+        last_mode = _resolve_last_mode()
 
         is_category_mode = last_mode == AppMode.CATEGORY_ANALYSIS
         if not is_category_mode:
