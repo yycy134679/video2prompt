@@ -6,7 +6,6 @@ import asyncio
 import logging
 import os
 import random
-import time
 from collections.abc import Callable
 from datetime import datetime
 from typing import Any
@@ -17,7 +16,7 @@ from .cache_store import CacheStore
 from .circuit_breaker import CircuitBreaker
 from .errors import CircuitBreakerOpenError, GeminiError, GeminiRetryableError, ParserError, ParserRetryableError
 from .logging_utils import build_model_log_extra
-from .models import AppConfig, Task, TaskState
+from .models import AppConfig, ParseResult, Task, TaskState
 from .parser_client import ParserClient
 from .review_result import extract_can_translate, split_review_columns
 from .video_analysis_client import VideoAnalysisClient
@@ -33,6 +32,8 @@ class TaskScheduler:
 
     OUTPUT_FORMAT_PLAIN_TEXT = "plain_text"
     OUTPUT_FORMAT_JSON = "json"
+    MAX_RETRIES_PER_SERVICE = 2
+    BACKOFF_HARD_CAP_SECONDS = 30.0
 
     def __init__(
         self,
@@ -58,8 +59,6 @@ class TaskScheduler:
         self.volcengine_responses_client = volcengine_responses_client
         self.volcengine_batch_client = volcengine_batch_client
 
-        self._global_pause_until: float = 0.0
-        self._pause_lock = asyncio.Lock()
         self._circuit_reason: str | None = None
         self._default_user_prompt = ""
         self._output_format = self.OUTPUT_FORMAT_PLAIN_TEXT
@@ -265,7 +264,7 @@ class TaskScheduler:
         cancel_event: asyncio.Event,
     ) -> None:
         backoff_seq = self.config.retry.parser_backoff_seconds
-        max_attempts = len(backoff_seq) + 1
+        max_attempts = min(len(backoff_seq) + 1, self.MAX_RETRIES_PER_SERVICE + 1)
         for attempt in range(1, max_attempts + 1):
             if cancel_event.is_set():
                 task.state = TaskState.CANCELLED
@@ -273,15 +272,12 @@ class TaskScheduler:
                 raise Exception("任务已取消")
 
             self._check_circuit()
-            await self._wait_global_pause()
-            await asyncio.sleep(random.uniform(self.config.parser.pre_delay_min_seconds, self.config.parser.pre_delay_max_seconds))
 
             task.state = TaskState.PARSING
             task.parse_retries = attempt - 1
             self._emit(task, on_update)
             try:
-                async with parser_semaphore:
-                    result = await self.parser.parse_video(task.original_link)
+                result = await self._parse_with_slot_cooldown(task.original_link, parser_semaphore)
                 self.parser_breaker.record_success()
                 task.aweme_id = result.aweme_id
                 task.video_url = result.video_url
@@ -314,7 +310,7 @@ class TaskScheduler:
         cancel_event: asyncio.Event,
     ) -> None:
         backoff_seq = self.config.retry.gemini_backoff_seconds
-        max_attempts = len(backoff_seq) + 1
+        max_attempts = min(len(backoff_seq) + 1, self.MAX_RETRIES_PER_SERVICE + 1)
         api_mode = task.model_api_mode or "chat"
 
         for attempt in range(1, max_attempts + 1):
@@ -324,7 +320,6 @@ class TaskScheduler:
                 raise Exception("任务已取消")
 
             self._check_circuit()
-            await self._wait_global_pause()
             task.state = TaskState.INTERPRETING
             task.gemini_retries = attempt - 1
             self._emit(task, on_update)
@@ -606,6 +601,22 @@ class TaskScheduler:
         self.logger.info("检测到 Chat URL 拉取失败，自动回退 responses_file 重试")
         return True
 
+    async def _parse_with_slot_cooldown(
+        self,
+        url: str,
+        parser_semaphore: asyncio.Semaphore,
+    ) -> ParseResult:
+        async with parser_semaphore:
+            try:
+                return await self.parser.parse_video(url)
+            finally:
+                cooldown_seconds = random.uniform(
+                    self.config.parser.pre_delay_min_seconds,
+                    self.config.parser.pre_delay_max_seconds,
+                )
+                if cooldown_seconds > 0:
+                    await asyncio.sleep(cooldown_seconds)
+
     async def _backoff_wait(
         self,
         service: str,
@@ -621,12 +632,9 @@ class TaskScheduler:
         else:
             cap = int(self.config.retry.gemini_backoff_cap_seconds)
 
-        delay = min(base_delay + max(0.0, float(extra_delay_seconds)), float(cap))
-        delay_with_jitter = delay + random.uniform(0.0, 1.0)
-
-        if self.config.retry.pause_global_queue_during_backoff:
-            async with self._pause_lock:
-                self._global_pause_until = max(self._global_pause_until, time.monotonic() + delay_with_jitter)
+        hard_cap = min(float(cap), self.BACKOFF_HARD_CAP_SECONDS)
+        delay = min(base_delay + max(0.0, float(extra_delay_seconds)), hard_cap)
+        delay_with_jitter = min(delay + random.uniform(0.0, 1.0), hard_cap)
 
         if task is not None:
             task.state = TaskState.INTERVAL
@@ -644,15 +652,7 @@ class TaskScheduler:
             cap = self.config.retry.gemini_backoff_cap_seconds
 
         idx = max(0, min(attempt - 1, len(seq) - 1))
-        return float(min(int(seq[idx]), int(cap)))
-
-    async def _wait_global_pause(self) -> None:
-        while True:
-            async with self._pause_lock:
-                remain = self._global_pause_until - time.monotonic()
-            if remain <= 0:
-                return
-            await asyncio.sleep(min(remain, 1.0))
+        return float(min(int(seq[idx]), int(cap), int(self.BACKOFF_HARD_CAP_SECONDS)))
 
     def _check_circuit(self) -> None:
         if self._circuit_reason:

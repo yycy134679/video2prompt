@@ -57,26 +57,26 @@ volcengine:
 parser:
   # 解析服务地址（本地 Docker 服务）
   base_url: "http://localhost:80"
-  # 并发解析任务数（建议 1-5）
-  concurrency: 2
-  # 每条任务解析前随机等待最小秒数
+  # 并发解析任务数（建议 1-50）
+  concurrency: 5
+  # 每次解析完成后，槽位冷却最小秒数
   pre_delay_min_seconds: 3.0
-  # 每条任务解析前随机等待最大秒数
-  pre_delay_max_seconds: 5.0
+  # 每次解析完成后，槽位冷却最大秒数
+  pre_delay_max_seconds: 3.0
   # 解析请求超时时间（秒）
   timeout_seconds: 30
 
 # 重试与退避配置
 retry:
   # Parser 重试等待序列（秒）
-  parser_backoff_seconds: [10, 30, 120]
+  parser_backoff_seconds: [10, 30]
   # Gemini 重试等待序列（秒）
-  gemini_backoff_seconds: [5, 15, 60]
+  gemini_backoff_seconds: [5, 15]
   # Parser 最大退避上限（秒）
-  parser_backoff_cap_seconds: 120
+  parser_backoff_cap_seconds: 30
   # Gemini 最大退避上限（秒）
-  gemini_backoff_cap_seconds: 60
-  # 退避期间是否暂停全局队列
+  gemini_backoff_cap_seconds: 30
+  # 兼容保留字段（当前版本调度器不再使用）
   pause_global_queue_during_backoff: true
 
 # 熔断器配置
@@ -99,7 +99,7 @@ circuit_breaker:
 # 单任务尾部延时配置
 task:
   # 任务完成后随机等待最小秒数
-  completion_delay_min_seconds: 0.8
+  completion_delay_min_seconds: 1.0
   # 任务完成后随机等待最大秒数
   completion_delay_max_seconds: 2.0
 

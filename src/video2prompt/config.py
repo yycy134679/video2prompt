@@ -167,8 +167,8 @@ class ConfigManager:
         if config.provider not in {"gemini", "volcengine"}:
             raise ConfigError("provider 必须是 gemini/volcengine")
 
-        if not (1 <= config.parser.concurrency <= 5):
-            raise ConfigError("parser.concurrency 必须在 1-5 之间")
+        if not (1 <= config.parser.concurrency <= 50):
+            raise ConfigError("parser.concurrency 必须在 1-50 之间")
         if config.parser.pre_delay_min_seconds < 0 or config.parser.pre_delay_max_seconds < 0:
             raise ConfigError("parser.pre_delay_* 必须 >= 0")
         if config.parser.pre_delay_min_seconds > config.parser.pre_delay_max_seconds:
@@ -242,6 +242,8 @@ class ConfigManager:
             raise ConfigError("retry.gemini_backoff_seconds 必须为正整数")
         if config.retry.parser_backoff_cap_seconds <= 0 or config.retry.gemini_backoff_cap_seconds <= 0:
             raise ConfigError("retry backoff cap 必须 > 0")
+        if config.retry.parser_backoff_cap_seconds > 30 or config.retry.gemini_backoff_cap_seconds > 30:
+            raise ConfigError("retry backoff cap 必须 <= 30")
 
         if not (0 <= config.circuit_breaker.parser.failure_rate <= 1):
             raise ConfigError("circuit_breaker.parser.failure_rate 必须在 [0,1]")

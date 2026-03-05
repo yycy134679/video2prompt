@@ -292,7 +292,7 @@ def main() -> None:
             runtime_overrides["parser.concurrency"] = st.number_input(
                 "解析并发数（parser.concurrency）",
                 min_value=1,
-                max_value=5,
+                max_value=50,
                 value=base_config.parser.concurrency,
                 step=1,
             )
@@ -340,13 +340,13 @@ def main() -> None:
                 )
         with col2:
             runtime_overrides["parser.pre_delay_min_seconds"] = st.number_input(
-                "解析前最小等待秒数（parser.pre_delay_min_seconds）",
+                "解析槽位冷却最小秒数（parser.pre_delay_min_seconds）",
                 min_value=0.0,
                 value=float(base_config.parser.pre_delay_min_seconds),
                 step=0.1,
             )
             runtime_overrides["parser.pre_delay_max_seconds"] = st.number_input(
-                "解析前最大等待秒数（parser.pre_delay_max_seconds）",
+                "解析槽位冷却最大秒数（parser.pre_delay_max_seconds）",
                 min_value=0.0,
                 value=float(base_config.parser.pre_delay_max_seconds),
                 step=0.1,

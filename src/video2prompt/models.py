@@ -61,18 +61,18 @@ class VolcengineConfig:
 @dataclass
 class ParserConfig:
     base_url: str = "http://localhost:80"
-    concurrency: int = 3
-    pre_delay_min_seconds: float = 1.5
-    pre_delay_max_seconds: float = 4.0
+    concurrency: int = 50
+    pre_delay_min_seconds: float = 3.0
+    pre_delay_max_seconds: float = 3.0
     timeout_seconds: int = 30
 
 
 @dataclass
 class RetryConfig:
-    parser_backoff_seconds: list[int] = field(default_factory=lambda: [10, 30, 120, 300])
-    gemini_backoff_seconds: list[int] = field(default_factory=lambda: [5, 15, 60, 180])
-    parser_backoff_cap_seconds: int = 600
-    gemini_backoff_cap_seconds: int = 300
+    parser_backoff_seconds: list[int] = field(default_factory=lambda: [10, 30])
+    gemini_backoff_seconds: list[int] = field(default_factory=lambda: [5, 15])
+    parser_backoff_cap_seconds: int = 30
+    gemini_backoff_cap_seconds: int = 30
     pause_global_queue_during_backoff: bool = True
 
 

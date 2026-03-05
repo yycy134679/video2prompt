@@ -51,15 +51,15 @@ volcengine:
   batch_size: 20
 parser:
   base_url: "http://localhost:80"
-  concurrency: 3
-  pre_delay_min_seconds: 1.5
-  pre_delay_max_seconds: 4.0
+  concurrency: 50
+  pre_delay_min_seconds: 3.0
+  pre_delay_max_seconds: 3.0
   timeout_seconds: 30
 retry:
-  parser_backoff_seconds: [10, 30, 120, 300]
-  gemini_backoff_seconds: [5, 15, 60, 180]
-  parser_backoff_cap_seconds: 600
-  gemini_backoff_cap_seconds: 300
+  parser_backoff_seconds: [10, 30]
+  gemini_backoff_seconds: [5, 15]
+  parser_backoff_cap_seconds: 30
+  gemini_backoff_cap_seconds: 30
   pause_global_queue_during_backoff: true
 circuit_breaker:
   window_seconds: 300
@@ -91,7 +91,7 @@ logging:
     assert config.gemini.video_fps == 2.0
     assert config.gemini.thinking_level == "high"
     assert config.gemini.media_resolution == "media_resolution_medium"
-    assert config.parser.concurrency == 3
+    assert config.parser.concurrency == 50
     assert config.volcengine.video_fps == 1.0
     assert config.volcengine.reasoning_effort == "medium"
     assert config.volcengine.input_mode == "auto"
@@ -116,6 +116,47 @@ def test_config_invalid_concurrency(tmp_path: Path, monkeypatch: pytest.MonkeyPa
         """
 parser:
   concurrency: 0
+        """.strip(),
+    )
+
+    with pytest.raises(ConfigError):
+        ConfigManager(env_path=str(env), config_path=str(cfg))
+
+
+def test_config_invalid_concurrency_too_high(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.delenv("VOLCENGINE_API_KEY", raising=False)
+    monkeypatch.delenv("ARK_API_KEY", raising=False)
+
+    env = tmp_path / ".env"
+    cfg = tmp_path / "config.yaml"
+    _write(env, "GEMINI_API_KEY=test_key\n")
+    _write(
+        cfg,
+        """
+parser:
+  concurrency: 51
+        """.strip(),
+    )
+
+    with pytest.raises(ConfigError):
+        ConfigManager(env_path=str(env), config_path=str(cfg))
+
+
+def test_config_invalid_retry_backoff_cap_too_large(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.delenv("VOLCENGINE_API_KEY", raising=False)
+    monkeypatch.delenv("ARK_API_KEY", raising=False)
+
+    env = tmp_path / ".env"
+    cfg = tmp_path / "config.yaml"
+    _write(env, "GEMINI_API_KEY=test_key\n")
+    _write(
+        cfg,
+        """
+retry:
+  parser_backoff_cap_seconds: 31
+  gemini_backoff_cap_seconds: 30
         """.strip(),
     )
 
