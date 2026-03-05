@@ -12,6 +12,7 @@ class TaskState(str, Enum):
 
     WAITING = "待解析"
     PARSING = "解析中"
+    DURATION_CHECKING = "时长判断中"
     INTERVAL = "等待间隔"
     INTERPRETING = "模型解读中"
     COMPLETED = "完成"
@@ -25,6 +26,7 @@ class AppMode(str, Enum):
 
     VIDEO_PROMPT = "视频复刻提示词"
     CATEGORY_ANALYSIS = "按类目分析"
+    DURATION_CHECK = "视频时长判断"
 
 
 @dataclass
@@ -185,6 +187,8 @@ class Task:
     model_cached_tokens: int = 0
     model_request_id: str = ""
     model_api_mode: str = ""
+    video_duration_seconds: float | None = None
+    duration_check_bucket: str = ""
 
     @property
     def duration_seconds(self) -> float:
