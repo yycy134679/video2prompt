@@ -49,6 +49,7 @@ SESSION_DURATION_LONG_FAILED_DOWNLOAD = "duration_long_failed_download_payload"
 SESSION_RUN_CONTROLLER = "run_controller"
 PAGE_SETUP = "首次设置 / 环境检查"
 PAGE_TASK = "任务执行"
+APP_ROOT = Path(__file__).resolve().parent
 
 
 @dataclass
@@ -139,6 +140,13 @@ def _count_lines(text: str) -> tuple[int, int]:
     lines = text.splitlines() if text else []
     non_empty = sum(1 for line in lines if line.strip())
     return len(lines), non_empty
+
+
+def _resolve_repo_path(path_value: str) -> Path:
+    candidate = Path(path_value)
+    if candidate.is_absolute():
+        return candidate
+    return APP_ROOT / candidate
 
 
 def _is_secret_configured(*values: str) -> bool:
@@ -690,20 +698,23 @@ def main() -> None:
     st.title("video2prompt - 批量视频解读")
 
     try:
-        config_manager = ConfigManager(env_path=".env", config_path="config.yaml")
+        config_manager = ConfigManager(
+            env_path=str(APP_ROOT / ".env"),
+            config_path=str(APP_ROOT / "config.yaml"),
+        )
         base_config = config_manager.get_config()
     except ConfigError as exc:
         st.error(f"配置错误: {exc}")
         st.stop()
 
     logger = setup_logging(
-        base_config.logging.file_path,
+        str(_resolve_repo_path(base_config.logging.file_path)),
         base_config.logging.level,
         base_config.logging.retention_days,
     )
     st.session_state["logger"] = logger
 
-    cache = CacheStore(base_config.cache.db_path)
+    cache = CacheStore(str(_resolve_repo_path(base_config.cache.db_path)))
     asyncio.run(cache.init_db())
 
     if "default_user_prompt" not in st.session_state:
@@ -722,7 +733,7 @@ def main() -> None:
     if SESSION_DURATION_LONG_FAILED_DOWNLOAD not in st.session_state:
         st.session_state[SESSION_DURATION_LONG_FAILED_DOWNLOAD] = None
 
-    parser_service = ManagedParserService(repo_root=Path.cwd())
+    parser_service = ManagedParserService(repo_root=APP_ROOT)
     parser_status = parser_service.read_status()
     page_options = [PAGE_SETUP, PAGE_TASK]
     default_page = PAGE_SETUP if _should_default_to_setup(config_manager, base_config, parser_status) else PAGE_TASK
@@ -1143,7 +1154,7 @@ def main() -> None:
 
             if export_duration_clicked:
                 exporter = DurationExcelExporter()
-                output_dir = Path("exports")
+                output_dir = APP_ROOT / "exports"
                 output_dir.mkdir(parents=True, exist_ok=True)
                 short_name, long_failed_name = exporter.generate_filenames()
                 short_file = output_dir / short_name
@@ -1203,8 +1214,8 @@ def main() -> None:
                 export_markdown_clicked = st.button("导出 Markdown（按类目）")
 
             if export_excel_clicked:
-                exporter = ExcelExporter(template_path="docs/product_prompt_template.xlsx")
-                output_dir = Path("exports")
+                exporter = ExcelExporter(template_path=str(APP_ROOT / "docs/product_prompt_template.xlsx"))
+                output_dir = APP_ROOT / "exports"
                 output_dir.mkdir(parents=True, exist_ok=True)
                 output_file = output_dir / ExcelExporter.generate_filename()
                 exporter.export(
@@ -1220,7 +1231,7 @@ def main() -> None:
                 st.success(f"导出成功: {output_file}")
 
             if export_markdown_clicked:
-                markdown_exporter = MarkdownExporter(output_root="exports")
+                markdown_exporter = MarkdownExporter(output_root=str(APP_ROOT / "exports"))
                 try:
                     result = markdown_exporter.export_by_category(tasks=restore_tasks)
                 except ValueError as exc:
@@ -1273,8 +1284,8 @@ def main() -> None:
                 export_excel_clicked = st.button("导出 Excel")
 
             if export_excel_clicked:
-                exporter = ExcelExporter(template_path="docs/product_prompt_template.xlsx")
-                output_dir = Path("exports")
+                exporter = ExcelExporter(template_path=str(APP_ROOT / "docs/product_prompt_template.xlsx"))
+                output_dir = APP_ROOT / "exports"
                 output_dir.mkdir(parents=True, exist_ok=True)
                 output_file = output_dir / ExcelExporter.generate_filename()
                 exporter.export(

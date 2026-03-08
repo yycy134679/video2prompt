@@ -21,6 +21,10 @@ MANAGED_PARSER_HOST = "127.0.0.1"
 MANAGED_PARSER_PORT = 18080
 
 
+def _default_repo_root() -> Path:
+    return Path(__file__).resolve().parents[2]
+
+
 @dataclass
 class ManagedParserStatus:
     installed: bool
@@ -49,7 +53,7 @@ class ManagedParserService:
         host: str = MANAGED_PARSER_HOST,
         port: int = MANAGED_PARSER_PORT,
     ) -> None:
-        base_root = Path(repo_root or Path.cwd()).resolve()
+        base_root = Path(repo_root or _default_repo_root()).resolve()
         self.repo_root = base_root
         self.parser_root = Path(parser_root or (base_root / ".managed" / "douyin_tiktok_download_api")).resolve()
         self.host = host
