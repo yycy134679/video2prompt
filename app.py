@@ -26,7 +26,7 @@ from video2prompt.logging_utils import setup_logging
 from video2prompt.managed_parser_service import ManagedParserService, ManagedParserStatus
 from video2prompt.markdown_exporter import MarkdownExporter
 from video2prompt.models import AppMode, Task, TaskInput
-from video2prompt.parser_client import ParserClient
+from video2prompt.resilient_parser_client import ResilientParserClient
 from video2prompt.review_result import DEFAULT_REVIEW_PROMPT
 from video2prompt.task_scheduler import TaskScheduler
 from video2prompt.validator import InputValidator
@@ -374,10 +374,12 @@ async def _run_scheduler(
     volc_responses_client = None
     volc_batch_client = None
 
-    parser_client = ParserClient(
+    parser_client = ResilientParserClient(
         base_url=config.parser.base_url,
         timeout_seconds=config.parser.timeout_seconds,
         http_client=parser_http,
+        repo_root=APP_ROOT,
+        logger=logger,
     )
     if config.provider == "gemini":
         model_client = GeminiClient(
@@ -476,10 +478,12 @@ async def _run_duration_checker(
     on_update=None,
 ):
     parser_http = httpx.AsyncClient(timeout=config.parser.timeout_seconds)
-    parser_client = ParserClient(
+    parser_client = ResilientParserClient(
         base_url=config.parser.base_url,
         timeout_seconds=config.parser.timeout_seconds,
         http_client=parser_http,
+        repo_root=APP_ROOT,
+        logger=logger,
     )
     runner = DurationCheckRunner(
         parser=parser_client,

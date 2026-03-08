@@ -7,6 +7,7 @@
 - 提供 `scripts/mac/安装.command`、`scripts/mac/启动.command`、`scripts/mac/停止.command`
 - 首次配置改为应用内“首次设置 / 环境检查”页面
 - 内置受管本地解析服务，不再要求同事手动安装 `git`、Docker 或单独维护解析仓库
+- 内置 `yt-dlp` 兜底解析，不再把稳定性完全依赖在单一 parser 上
 
 ## 给谁看
 
@@ -41,6 +42,7 @@
 
 - 底层仍使用 [Douyin_TikTok_Download_API](https://github.com/Evil0ctal/Douyin_TikTok_Download_API)
 - 当前固定版本：`V4.1.2`
+- 当本地 parser 因抖音风控返回空响应、`400` 或超时时，应用会自动尝试 `yt-dlp` 兜底解析
 - 启动时会自动写入以下受管配置：
   - `API.Host_IP = 127.0.0.1`
   - `API.Host_Port = 18080`
@@ -66,6 +68,7 @@
 - API Key 保存在本地 `.env`
 - 业务配置保存在 `config.yaml`
 - parser Cookie 保存在受管解析服务源码目录里的 YAML 文件
+- `yt-dlp` 兜底解析会复用同一份抖音 / TikTok Cookie
 - 设置页默认不回显完整 Cookie 或 API Key
 
 ## 开发者快速开始
@@ -169,6 +172,11 @@ video2prompt/
 
 - [scripts/mac/启动.command](scripts/mac/启动.command) 的终端输出
 - 受管 parser 日志：`.managed/douyin_tiktok_download_api/runtime/parser.log`
+
+说明：
+
+- 即使本地 parser 出现部分抖音链接 `400` / 空响应，主流程仍会自动尝试 `yt-dlp` 兜底
+- 如果两条链路都失败，再回头检查 Cookie、账号风控或上游链接状态
 
 ### Streamlit 启动失败
 

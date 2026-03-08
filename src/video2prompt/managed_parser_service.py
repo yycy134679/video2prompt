@@ -10,6 +10,7 @@ import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 import yaml
 
@@ -120,6 +121,16 @@ class ManagedParserService:
                         {"TokenManager.tiktok.headers.Cookie": tiktok_cookie.strip()},
                     )
 
+    def get_cookie_for_url(self, url: str) -> str:
+        host = (urlparse(url).hostname or "").lower()
+        if host.endswith("tiktok.com"):
+            for path in (self.tiktok_web_cookie_config_path, self.tiktok_app_cookie_config_path):
+                value = self._read_cookie_value(path)
+                if value:
+                    return value
+            return ""
+        return self._read_cookie_value(self.douyin_cookie_config_path)
+
     def read_status(self) -> ManagedParserStatus:
         installed = self.is_installed()
         running = self.is_running()
@@ -226,11 +237,18 @@ class ManagedParserService:
 
     def test_parse(self, url: str) -> tuple[bool, str]:
         async def _run() -> tuple[bool, str]:
-            client = ParserClient(base_url=self.base_url, timeout_seconds=15)
+            from .resilient_parser_client import ResilientParserClient
+
+            client = ResilientParserClient(
+                base_url=self.base_url,
+                timeout_seconds=30,
+                repo_root=self.repo_root,
+                parser_root=self.parser_root,
+            )
             try:
                 result = await client.parse_video(url)
             except Exception as exc:  # noqa: BLE001
-                return False, str(exc)
+                return False, self._summarize_parse_failure(str(exc))
             return True, f"解析成功：aweme_id={result.aweme_id}，video_url={result.video_url[:120]}"
 
         return asyncio.run(_run())
@@ -289,8 +307,11 @@ class ManagedParserService:
             yaml.safe_dump(data, f, allow_unicode=True, sort_keys=False)
 
     def _cookie_is_configured(self, path: Path) -> bool:
+        return bool(self._read_cookie_value(path))
+
+    def _read_cookie_value(self, path: Path) -> str:
         if not path.exists():
-            return False
+            return ""
         data = self._load_yaml(path)
         value = (
             data.get("TokenManager", {})
@@ -305,4 +326,30 @@ class ManagedParserService:
                 .get("headers", {})
                 .get("Cookie")
             )
-        return bool(str(value or "").strip())
+        return str(value or "").strip()
+
+    def _summarize_parse_failure(self, fallback_message: str) -> str:
+        recent_log = self._read_recent_log_text()
+        if "响应内容为空" in recent_log and "无效响应类型" in recent_log:
+            return (
+                "抖音详情接口返回 200 但响应内容为空，底层解析服务未拿到有效视频详情。"
+                "这通常是抖音风控或当前 Douyin_TikTok_Download_API 指纹兼容问题，不是链接格式问题。"
+            )
+        if "400 Bad Request" in recent_log and not fallback_message.strip():
+            return "解析服务返回 400，请检查受管 parser 日志。"
+        return fallback_message
+
+    def _read_recent_log_text(self, max_bytes: int = 32768) -> str:
+        if not self.log_file.exists():
+            return ""
+        try:
+            with self.log_file.open("rb") as f:
+                f.seek(0, os.SEEK_END)
+                file_size = f.tell()
+                if file_size <= 0:
+                    return ""
+                read_size = min(file_size, max_bytes)
+                f.seek(-read_size, os.SEEK_END)
+                return f.read().decode("utf-8", errors="ignore")
+        except OSError:
+            return ""

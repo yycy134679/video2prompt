@@ -6,6 +6,7 @@ from pathlib import Path
 import yaml
 
 from video2prompt.managed_parser_service import MANAGED_PARSER_PORT, ManagedParserService
+from video2prompt.parser_client import ParserClient
 
 
 def _write_yaml(path: Path, data: dict) -> None:
@@ -80,3 +81,29 @@ def test_start_stop_and_status(tmp_path: Path, monkeypatch) -> None:
 
     service.stop()
     assert service.is_running() is False
+
+
+def test_test_parse_surfaces_recent_parser_log_hint(tmp_path: Path, monkeypatch) -> None:
+    parser_root = tmp_path / "managed"
+    _create_fake_parser_tree(parser_root)
+    service = ManagedParserService(parser_root=parser_root)
+    service.runtime_dir.mkdir(parents=True, exist_ok=True)
+    service.log_file.write_text(
+        "\n".join(
+            [
+                "WARNING 第 1 次响应内容为空, 状态码: 200",
+                "ERROR 无效响应类型。响应类型: <class 'NoneType'>",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    async def _fake_parse_video(self: ParserClient, url: str):  # noqa: ARG001
+        raise RuntimeError("解析请求超时:")
+
+    monkeypatch.setattr(ParserClient, "parse_video", _fake_parse_video)
+
+    ok, message = service.test_parse("https://www.douyin.com/video/123")
+
+    assert ok is False
+    assert "抖音详情接口返回 200 但响应内容为空" in message
