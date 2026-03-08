@@ -62,7 +62,7 @@ class VolcengineConfig:
 
 @dataclass
 class ParserConfig:
-    base_url: str = "http://localhost:80"
+    base_url: str = "http://127.0.0.1:18080"
     concurrency: int = 50
     pre_delay_min_seconds: float = 3.0
     pre_delay_max_seconds: float = 3.0

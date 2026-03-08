@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from dotenv import load_dotenv
+from dotenv import dotenv_values, load_dotenv
 
 from .errors import ConfigError
 from .models import (
@@ -34,8 +34,11 @@ class ConfigManager:
         self._config_path = Path(config_path)
         self._overrides: dict[str, Any] = {}
         self._base_config = AppConfig()
-        load_dotenv(self._env_path, override=False)
+        self._reload_env(override=False)
         self._reload_base_config()
+
+    def _reload_env(self, override: bool) -> None:
+        load_dotenv(self._env_path, override=override)
 
     def _reload_base_config(self) -> None:
         raw = self._load_yaml()
@@ -72,6 +75,66 @@ class ConfigManager:
         if config.provider == "volcengine":
             return self.get_volcengine_api_key()
         raise ConfigError(f"不支持的 provider: {config.provider}")
+
+    def get_env_value(self, key: str) -> str:
+        return os.getenv(key, "").strip()
+
+    def save_env_values(self, mapping: dict[str, str | None]) -> None:
+        existing = {key: str(value) for key, value in dotenv_values(self._env_path).items() if value is not None}
+        for key, value in mapping.items():
+            if value is None:
+                existing.pop(key, None)
+                os.environ.pop(key, None)
+                continue
+            cleaned = str(value).strip()
+            if cleaned:
+                existing[key] = cleaned
+                os.environ[key] = cleaned
+            else:
+                existing.pop(key, None)
+                os.environ.pop(key, None)
+
+        self._env_path.parent.mkdir(parents=True, exist_ok=True)
+        content = "\n".join(f"{key}={value}" for key, value in sorted(existing.items()))
+        if content:
+            content += "\n"
+        self._env_path.write_text(content, encoding="utf-8")
+        self._reload_env(override=True)
+
+    def save_config_values(self, mapping: dict[str, Any]) -> None:
+        if not mapping:
+            return
+        raw = self._load_yaml()
+        for key, value in mapping.items():
+            self._set_dotted_value(raw, key, value)
+        self._config_path.parent.mkdir(parents=True, exist_ok=True)
+        with self._config_path.open("w", encoding="utf-8") as f:
+            yaml.safe_dump(raw, f, allow_unicode=True, sort_keys=False)
+        self._reload_base_config()
+
+    def get_runtime_validation_errors(self, config: AppConfig | None = None) -> list[str]:
+        current = config or self.get_config()
+        errors: list[str] = []
+
+        if current.provider == "gemini":
+            if not self.get_env_value("GEMINI_API_KEY"):
+                errors.append("当前 provider=gemini，但尚未配置 GEMINI_API_KEY")
+            return errors
+
+        if current.provider == "volcengine":
+            if not self.get_env_value("VOLCENGINE_API_KEY") and not self.get_env_value("ARK_API_KEY"):
+                errors.append("当前 provider=volcengine，但尚未配置 VOLCENGINE_API_KEY（或 ARK_API_KEY）")
+            if not current.volcengine.endpoint_id.strip():
+                errors.append("当前 provider=volcengine，但尚未配置 volcengine.endpoint_id")
+            return errors
+
+        errors.append(f"不支持的 provider: {current.provider}")
+        return errors
+
+    def ensure_runtime_ready(self, config: AppConfig | None = None) -> None:
+        errors = self.get_runtime_validation_errors(config=config)
+        if errors:
+            raise ConfigError("；".join(errors))
 
     def override(self, **kwargs: Any) -> None:
         """运行时覆盖配置。支持点路径键，例如 parser.concurrency=2。"""
@@ -196,8 +259,6 @@ class ConfigManager:
             raise ConfigError("timeout_seconds 必须 > 0")
         if config.volcengine.timeout_seconds <= 0:
             raise ConfigError("volcengine.timeout_seconds 必须 > 0")
-        if config.provider == "volcengine" and not config.volcengine.endpoint_id.strip():
-            raise ConfigError("provider=volcengine 时，volcengine.endpoint_id 不能为空")
         if config.provider == "volcengine" and not config.volcengine.target_model.strip():
             raise ConfigError("provider=volcengine 时，volcengine.target_model 不能为空")
         if config.provider == "volcengine":
@@ -267,8 +328,6 @@ class ConfigManager:
         if config.logging.retention_days <= 0:
             raise ConfigError("logging.retention_days 必须 > 0")
 
-        ConfigManager._validate_provider_api_key(config.provider)
-
     @staticmethod
     def _normalize_thinking_level(value: str) -> str:
         return (value or "").strip().lower()
@@ -299,15 +358,3 @@ class ConfigManager:
     @staticmethod
     def _normalize_volc_input_mode(value: str) -> str:
         return (value or "").strip().lower()
-
-    @staticmethod
-    def _validate_provider_api_key(provider: str) -> None:
-        if provider == "gemini":
-            if not os.getenv("GEMINI_API_KEY", "").strip():
-                raise ConfigError("provider=gemini 时缺少 GEMINI_API_KEY，请在 .env 中配置")
-            return
-
-        if provider == "volcengine":
-            volc_key = os.getenv("VOLCENGINE_API_KEY", "").strip() or os.getenv("ARK_API_KEY", "").strip()
-            if not volc_key:
-                raise ConfigError("provider=volcengine 时缺少 VOLCENGINE_API_KEY（或 ARK_API_KEY），请在 .env 中配置")

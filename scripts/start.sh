@@ -14,10 +14,5 @@ if ! python3 -c "import streamlit" >/dev/null 2>&1; then
   exit 1
 fi
 
-if [ ! -f ".env" ]; then
-  echo "未找到 .env，请复制 .env.example 并填写 GEMINI_API_KEY"
-  exit 1
-fi
-
 export PYTHONPATH="$ROOT_DIR/src:${PYTHONPATH:-}"
 python3 -m streamlit run app.py --server.headless=false

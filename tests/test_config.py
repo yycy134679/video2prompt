@@ -50,7 +50,7 @@ volcengine:
   use_batch_chat: false
   batch_size: 20
 parser:
-  base_url: "http://localhost:80"
+  base_url: "http://127.0.0.1:18080"
   concurrency: 50
   pre_delay_min_seconds: 3.0
   pre_delay_max_seconds: 3.0
@@ -184,7 +184,7 @@ gemini:
         ConfigManager(env_path=str(env), config_path=str(cfg))
 
 
-def test_get_api_key_missing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_missing_api_key_does_not_block_startup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("GEMINI_API_KEY", raising=False)
     monkeypatch.delenv("VOLCENGINE_API_KEY", raising=False)
     monkeypatch.delenv("ARK_API_KEY", raising=False)
@@ -194,8 +194,10 @@ def test_get_api_key_missing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) ->
     _write(env, "")
     _write(cfg, "{}")
 
+    cm = ConfigManager(env_path=str(env), config_path=str(cfg))
+    assert cm.get_runtime_validation_errors() == ["当前 provider=gemini，但尚未配置 GEMINI_API_KEY"]
     with pytest.raises(ConfigError):
-        ConfigManager(env_path=str(env), config_path=str(cfg))
+        cm.get_gemini_api_key()
 
 
 def test_provider_volcengine_missing_key(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -215,8 +217,10 @@ volcengine:
         """.strip(),
     )
 
-    with pytest.raises(ConfigError):
-        ConfigManager(env_path=str(env), config_path=str(cfg))
+    cm = ConfigManager(env_path=str(env), config_path=str(cfg))
+    assert cm.get_runtime_validation_errors() == [
+        "当前 provider=volcengine，但尚未配置 VOLCENGINE_API_KEY（或 ARK_API_KEY）"
+    ]
 
 
 def test_provider_volcengine_missing_endpoint(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -236,8 +240,8 @@ volcengine:
         """.strip(),
     )
 
-    with pytest.raises(ConfigError):
-        ConfigManager(env_path=str(env), config_path=str(cfg))
+    cm = ConfigManager(env_path=str(env), config_path=str(cfg))
+    assert cm.get_runtime_validation_errors() == ["当前 provider=volcengine，但尚未配置 volcengine.endpoint_id"]
 
 
 def test_provider_volcengine_get_provider_api_key(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -260,6 +264,34 @@ volcengine:
 
     cm = ConfigManager(env_path=str(env), config_path=str(cfg))
     assert cm.get_provider_api_key() == "volc_test_key"
+
+
+def test_save_env_and_config_values(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.delenv("VOLCENGINE_API_KEY", raising=False)
+    monkeypatch.delenv("ARK_API_KEY", raising=False)
+
+    env = tmp_path / ".env"
+    cfg = tmp_path / "config.yaml"
+    _write(env, "")
+    _write(
+        cfg,
+        """
+provider: "volcengine"
+volcengine:
+  endpoint_id: ""
+  target_model: "seed-2.0-lite"
+        """.strip(),
+    )
+
+    cm = ConfigManager(env_path=str(env), config_path=str(cfg))
+    cm.save_env_values({"VOLCENGINE_API_KEY": "volc_test_key"})
+    cm.save_config_values({"volcengine.endpoint_id": "ep-test", "provider": "volcengine"})
+
+    assert cm.get_env_value("VOLCENGINE_API_KEY") == "volc_test_key"
+    config = cm.get_config()
+    assert config.volcengine.endpoint_id == "ep-test"
+    assert cm.get_runtime_validation_errors(config=config) == []
 
 
 def test_provider_volcengine_invalid_video_fps(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

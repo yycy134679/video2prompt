@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import hashlib
+import shutil
 import threading
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -22,6 +23,7 @@ from video2prompt.errors import ConfigError
 from video2prompt.excel_exporter import ExcelExporter
 from video2prompt.gemini_client import GeminiClient
 from video2prompt.logging_utils import setup_logging
+from video2prompt.managed_parser_service import ManagedParserService, ManagedParserStatus
 from video2prompt.markdown_exporter import MarkdownExporter
 from video2prompt.models import AppMode, Task, TaskInput
 from video2prompt.parser_client import ParserClient
@@ -45,6 +47,8 @@ SESSION_MARKDOWN_DOWNLOAD = "markdown_download_payload"
 SESSION_DURATION_SHORT_DOWNLOAD = "duration_short_download_payload"
 SESSION_DURATION_LONG_FAILED_DOWNLOAD = "duration_long_failed_download_payload"
 SESSION_RUN_CONTROLLER = "run_controller"
+PAGE_SETUP = "首次设置 / 环境检查"
+PAGE_TASK = "任务执行"
 
 
 @dataclass
@@ -135,6 +139,213 @@ def _count_lines(text: str) -> tuple[int, int]:
     lines = text.splitlines() if text else []
     non_empty = sum(1 for line in lines if line.strip())
     return len(lines), non_empty
+
+
+def _is_secret_configured(*values: str) -> bool:
+    return any(bool((value or "").strip()) for value in values)
+
+
+def _status_text(ok: bool) -> str:
+    return "已就绪" if ok else "未就绪"
+
+
+def _render_status_card(title: str, ok: bool, detail: str) -> None:
+    with st.container(border=True):
+        st.caption(title)
+        if ok:
+            st.success(_status_text(True))
+        else:
+            st.warning(_status_text(False))
+        if detail:
+            st.caption(detail)
+
+
+def _should_default_to_setup(
+    config_manager: ConfigManager,
+    base_config,
+    parser_status: ManagedParserStatus,
+) -> bool:
+    return bool(
+        not parser_status.installed
+        or not parser_status.healthy
+        or not parser_status.douyin_cookie_configured
+        or config_manager.get_runtime_validation_errors(config=base_config)
+    )
+
+
+def _render_setup_page(
+    config_manager: ConfigManager,
+    base_config,
+    parser_service: ManagedParserService,
+) -> None:
+    parser_status = parser_service.read_status()
+    volc_key_configured = _is_secret_configured(
+        config_manager.get_env_value("VOLCENGINE_API_KEY"),
+        config_manager.get_env_value("ARK_API_KEY"),
+    )
+    gemini_key_configured = _is_secret_configured(config_manager.get_env_value("GEMINI_API_KEY"))
+    ffprobe_installed = shutil.which("ffprobe") is not None
+
+    st.subheader("首次设置 / 环境检查")
+    st.caption("推荐先在这里完成环境检查和密钥、Cookie 配置，再切到“任务执行”页面。")
+
+    status_cols = st.columns(3)
+    with status_cols[0]:
+        _render_status_card("应用依赖", True, "当前页面已成功启动，说明基础依赖可用。")
+    with status_cols[1]:
+        _render_status_card(
+            "受管解析服务",
+            parser_status.installed,
+            f"目录：{parser_status.parser_root}",
+        )
+    with status_cols[2]:
+        _render_status_card(
+            "解析服务健康状态",
+            parser_status.healthy,
+            parser_status.base_url,
+        )
+
+    secret_cols = st.columns(3)
+    with secret_cols[0]:
+        _render_status_card(
+            "火山方舟配置",
+            volc_key_configured and bool(base_config.volcengine.endpoint_id.strip()),
+            (
+                f"endpoint_id：{base_config.volcengine.endpoint_id.strip() or '未配置'}"
+            ),
+        )
+    with secret_cols[1]:
+        _render_status_card(
+            "抖音 Cookie",
+            parser_status.douyin_cookie_configured,
+            "仅显示状态，不回显已保存内容。",
+        )
+    with secret_cols[2]:
+        _render_status_card(
+            "TikTok / ffprobe",
+            parser_status.tiktok_cookie_configured or ffprobe_installed,
+            f"TikTok Cookie：{_status_text(parser_status.tiktok_cookie_configured)}；ffprobe：{_status_text(ffprobe_installed)}",
+        )
+
+    if not parser_status.installed:
+        st.error("未检测到受管解析服务。请先双击运行 `scripts/mac/安装.command` 完成安装。")
+    elif not parser_status.healthy:
+        st.warning("解析服务未启动或尚未就绪。请先双击运行 `scripts/mac/启动.command`，然后刷新页面。")
+
+    with st.form("local_settings_form"):
+        st.markdown("### 主流程配置")
+        provider_options = ["volcengine", "gemini"]
+        current_provider = base_config.provider if base_config.provider in provider_options else "volcengine"
+        provider = st.selectbox(
+            "默认模型服务商",
+            options=provider_options,
+            index=provider_options.index(current_provider),
+            help="主流程推荐使用 volcengine；Gemini 放在进阶模式。",
+        )
+        endpoint_id = st.text_input(
+            "火山方舟 endpoint_id",
+            value=base_config.volcengine.endpoint_id,
+            help="仅 provider=volcengine 时必填。",
+        )
+        volc_key = st.text_input(
+            "VOLCENGINE_API_KEY（或使用 ARK_API_KEY）",
+            value="",
+            type="password",
+            placeholder="留空表示不修改当前已保存值",
+        )
+        douyin_cookie = st.text_area(
+            "抖音 Cookie",
+            value="",
+            height=140,
+            placeholder="从 Chrome 复制完整 Cookie 后粘贴到这里；留空表示不修改",
+        )
+
+        with st.expander("进阶设置", expanded=False):
+            gemini_key = st.text_input(
+                "GEMINI_API_KEY",
+                value="",
+                type="password",
+                placeholder="留空表示不修改当前已保存值",
+            )
+            tiktok_cookie = st.text_area(
+                "TikTok Cookie（可选）",
+                value="",
+                height=120,
+                placeholder="仅在需要解析 TikTok 时填写；留空表示不修改",
+            )
+            st.caption(
+                "时长判断模式需要 ffprobe。"
+                + ("当前已检测到 ffprobe。" if ffprobe_installed else "当前未检测到 ffprobe，可在进阶使用时再安装 ffmpeg。")
+            )
+
+        submitted = st.form_submit_button("保存设置")
+
+    if submitted:
+        try:
+            config_manager.save_config_values(
+                {
+                    "provider": provider,
+                    "volcengine.endpoint_id": endpoint_id.strip(),
+                }
+            )
+            env_updates: dict[str, str | None] = {}
+            if volc_key.strip():
+                env_updates["VOLCENGINE_API_KEY"] = volc_key.strip()
+            if gemini_key.strip():
+                env_updates["GEMINI_API_KEY"] = gemini_key.strip()
+            if env_updates:
+                config_manager.save_env_values(env_updates)
+
+            if parser_status.installed:
+                parser_service.prepare_managed_files(clear_cookies=False)
+                parser_service.update_cookies(
+                    douyin_cookie=douyin_cookie if douyin_cookie.strip() else None,
+                    tiktok_cookie=tiktok_cookie if tiktok_cookie.strip() else None,
+                )
+            elif douyin_cookie.strip() or tiktok_cookie.strip():
+                raise ConfigError("解析服务尚未安装，暂时无法保存 Cookie，请先运行安装脚本")
+        except ConfigError as exc:
+            st.error(f"保存失败：{exc}")
+        else:
+            st.success("设置已保存")
+            st.rerun()
+
+    st.markdown("### 服务检查")
+    action_cols = st.columns([1, 2])
+    with action_cols[0]:
+        if st.button("检查服务状态", use_container_width=True):
+            ok, message = parser_service.health_check() if parser_status.installed else (False, "解析服务尚未安装")
+            if ok:
+                st.success(message)
+            else:
+                st.warning(message)
+    with action_cols[1]:
+        parse_test_url = st.text_input(
+            "测试解析链接（可选）",
+            value="",
+            placeholder="粘贴一条抖音链接，验证 Cookie 和解析服务是否可用",
+        )
+        if st.button("测试解析", use_container_width=True):
+            if not parse_test_url.strip():
+                st.warning("请先输入要测试的链接")
+            elif not parser_status.installed:
+                st.error("解析服务尚未安装，请先运行安装脚本")
+            elif not parser_status.running:
+                st.error("解析服务尚未启动，请先运行启动脚本")
+            else:
+                ok, message = parser_service.test_parse(parse_test_url.strip())
+                if ok:
+                    st.success(message)
+                else:
+                    st.error(f"测试解析失败：{message}")
+
+    st.markdown("### Chrome 获取抖音 Cookie")
+    st.write("1. 打开 Chrome，登录抖音网页。")
+    st.write("2. 在抖音页面按 `Option + Command + I` 打开开发者工具。")
+    st.write("3. 切到 `Network`，刷新页面，点任意一个请求。")
+    st.write("4. 在请求头里找到 `Cookie`，复制完整内容。")
+    st.write("5. 回到本页面，把整段 Cookie 粘贴到“抖音 Cookie”输入框并保存。")
+    st.caption(f"受管解析服务目录：`{parser_status.parser_root}`")
 
 
 async def _run_scheduler(
@@ -511,6 +722,23 @@ def main() -> None:
     if SESSION_DURATION_LONG_FAILED_DOWNLOAD not in st.session_state:
         st.session_state[SESSION_DURATION_LONG_FAILED_DOWNLOAD] = None
 
+    parser_service = ManagedParserService(repo_root=Path.cwd())
+    parser_status = parser_service.read_status()
+    page_options = [PAGE_SETUP, PAGE_TASK]
+    default_page = PAGE_SETUP if _should_default_to_setup(config_manager, base_config, parser_status) else PAGE_TASK
+    selected_page = st.radio(
+        "页面",
+        options=page_options,
+        index=page_options.index(default_page),
+        horizontal=True,
+    )
+    if selected_page == PAGE_SETUP:
+        _render_setup_page(config_manager=config_manager, base_config=base_config, parser_service=parser_service)
+        return
+
+    if _should_default_to_setup(config_manager, base_config, parser_status):
+        st.warning("当前环境还未完全就绪，建议先到“首次设置 / 环境检查”页面完成配置后再执行任务。")
+
     if base_config.provider == "gemini":
         st.caption(f"当前模型服务商：gemini（model={base_config.gemini.model}）")
     else:
@@ -532,12 +760,22 @@ def main() -> None:
     app_mode = AppMode(selected_mode)
 
     with st.expander("服务状态", expanded=True):
-        checker = ParserClient(base_url=base_config.parser.base_url, timeout_seconds=5)
-        ok, msg = asyncio.run(checker.health_check())
+        parser_status = parser_service.read_status()
+        runtime_errors = config_manager.get_runtime_validation_errors(config=base_config)
+        ok, msg = parser_service.health_check() if parser_status.installed else (False, "解析服务尚未安装")
         if ok:
             st.success(msg)
         else:
             st.warning(msg)
+        st.caption(
+            "受管解析服务："
+            f" 安装={_status_text(parser_status.installed)} /"
+            f" 运行={_status_text(parser_status.running)} /"
+            f" 健康={_status_text(parser_status.healthy)} /"
+            f" 抖音 Cookie={_status_text(parser_status.douyin_cookie_configured)}"
+        )
+        if runtime_errors:
+            st.warning("运行前还需要补齐以下配置：" + "；".join(runtime_errors))
 
     runtime_overrides: dict[str, Any] = {}
     volc_max_tokens_text = ""
@@ -812,8 +1050,18 @@ def main() -> None:
                 runtime_overrides["volcengine.max_completion_tokens"] = int(token_text) if token_text else None
             config_manager.override_mapping(runtime_overrides)
             runtime_config = config_manager.get_config()
+            config_manager.ensure_runtime_ready(config=runtime_config)
         except Exception as exc:  # noqa: BLE001
             st.error(f"运行时配置无效: {exc}")
+            st.stop()
+
+        parser_status = parser_service.read_status()
+        if not parser_status.installed:
+            st.error("解析服务尚未安装，请先运行 scripts/mac/安装.command")
+            st.stop()
+        parser_ok, parser_msg = parser_service.health_check()
+        if not parser_ok:
+            st.error(f"解析服务不可用：{parser_msg}。请先运行 scripts/mac/启动.command")
             st.stop()
 
         controller = RunController(

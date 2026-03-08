@@ -23,7 +23,7 @@ volcengine:
   # 火山方舟 Chat API 基础地址
   base_url: "https://ark.cn-beijing.volces.com/api/v3"
   # 推理接入点 ID（请求体 model 字段实际使用此值）
-  endpoint_id: "ep-20260225230351-dx6fm"
+  endpoint_id: ""
   # 目标模型名称（用于配置可读性，不直接作为请求体 model）
   target_model: "seed-2.0-lite"
   # 火山请求超时时间（秒）
@@ -55,8 +55,8 @@ volcengine:
 
 # 抖音解析服务配置
 parser:
-  # 解析服务地址（本地 Docker 服务）
-  base_url: "http://localhost:80"
+  # 解析服务地址（受管本地服务）
+  base_url: "http://127.0.0.1:18080"
   # 并发解析任务数（建议 1-50）
   concurrency: 5
   # 每次解析完成后，槽位冷却最小秒数
