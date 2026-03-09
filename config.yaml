@@ -57,7 +57,7 @@ volcengine:
 parser:
   # 解析服务地址（本地 Docker 服务）
   base_url: "http://localhost:80"
-  # 并发解析任务数（建议 1-50）
+  # 并发解析任务数（建议 1-5）
   concurrency: 5
   # 每次解析完成后，槽位冷却最小秒数
   pre_delay_min_seconds: 3.0
@@ -99,9 +99,9 @@ circuit_breaker:
 # 单任务尾部延时配置
 task:
   # 任务完成后随机等待最小秒数
-  completion_delay_min_seconds: 1.0
+  completion_delay_min_seconds: 2.0
   # 任务完成后随机等待最大秒数
-  completion_delay_max_seconds: 2.0
+  completion_delay_max_seconds: 3.0
 
 # 缓存配置
 cache:

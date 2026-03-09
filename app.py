@@ -126,11 +126,6 @@ def _render_table(table_placeholder, tasks: list[Task], show_category: bool, sho
     )
 
 
-def _parse_backoff(value: str) -> list[int]:
-    items = [item.strip() for item in value.split(",") if item.strip()]
-    return [int(item) for item in items]
-
-
 def _count_lines(text: str) -> tuple[int, int]:
     lines = text.splitlines() if text else []
     non_empty = sum(1 for line in lines if line.strip())
@@ -540,51 +535,18 @@ def main() -> None:
             st.warning(msg)
 
     runtime_overrides: dict[str, Any] = {}
-    volc_max_tokens_text = ""
-    parser_backoff_text = ",".join(str(x) for x in base_config.retry.parser_backoff_seconds)
-    gemini_backoff_text = ",".join(str(x) for x in base_config.retry.gemini_backoff_seconds)
     output_format = OUTPUT_FORMAT_PLAIN_TEXT
     with st.expander("运行时配置覆盖（仅本次运行生效，不写回 config.yaml）", expanded=False):
+        st.caption("页面仅保留常用运行参数；退避、熔断、批量 Chat、完成后等待等高级项请在 config.yaml 中调整。")
         if app_mode == AppMode.DURATION_CHECK:
             st.caption("时长判断模式仅使用解析与时长探测，不会调用模型。")
-            col1, col2 = st.columns(2)
-            with col1:
-                runtime_overrides["parser.concurrency"] = st.number_input(
-                    "解析并发数（parser.concurrency）",
-                    min_value=1,
-                    max_value=50,
-                    value=base_config.parser.concurrency,
-                    step=1,
-                )
-                runtime_overrides["parser.pre_delay_min_seconds"] = st.number_input(
-                    "解析槽位冷却最小秒数（parser.pre_delay_min_seconds）",
-                    min_value=0.0,
-                    value=float(base_config.parser.pre_delay_min_seconds),
-                    step=0.1,
-                )
-                runtime_overrides["parser.pre_delay_max_seconds"] = st.number_input(
-                    "解析槽位冷却最大秒数（parser.pre_delay_max_seconds）",
-                    min_value=0.0,
-                    value=float(base_config.parser.pre_delay_max_seconds),
-                    step=0.1,
-                )
-            with col2:
-                parser_backoff_text = st.text_input(
-                    "Parser 重试退避序列（retry.parser_backoff_seconds）",
-                    value=",".join(str(x) for x in base_config.retry.parser_backoff_seconds),
-                )
-                runtime_overrides["task.completion_delay_min_seconds"] = st.number_input(
-                    "任务完成后最小等待秒数（task.completion_delay_min_seconds）",
-                    min_value=0.0,
-                    value=float(base_config.task.completion_delay_min_seconds),
-                    step=0.1,
-                )
-                runtime_overrides["task.completion_delay_max_seconds"] = st.number_input(
-                    "任务完成后最大等待秒数（task.completion_delay_max_seconds）",
-                    min_value=0.0,
-                    value=float(base_config.task.completion_delay_max_seconds),
-                    step=0.1,
-                )
+            runtime_overrides["parser.concurrency"] = st.number_input(
+                "解析并发数（parser.concurrency）",
+                min_value=1,
+                max_value=50,
+                value=base_config.parser.concurrency,
+                step=1,
+            )
         else:
             current_output_format = str(st.session_state.get("output_format", OUTPUT_FORMAT_PLAIN_TEXT))
             current_output_label = OUTPUT_FORMAT_VALUE_TO_LABEL.get(current_output_format, "纯文本（默认）")
@@ -596,16 +558,17 @@ def main() -> None:
             )
             output_format = OUTPUT_FORMAT_LABEL_TO_VALUE[output_format_label]
             st.session_state["output_format"] = output_format
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                runtime_overrides["parser.concurrency"] = st.number_input(
-                    "解析并发数（parser.concurrency）",
-                    min_value=1,
-                    max_value=50,
-                    value=base_config.parser.concurrency,
-                    step=1,
-                )
-                if base_config.provider == "gemini":
+            if base_config.provider == "gemini":
+                col1, col2 = st.columns(2)
+                with col1:
+                    runtime_overrides["parser.concurrency"] = st.number_input(
+                        "解析并发数（parser.concurrency）",
+                        min_value=1,
+                        max_value=50,
+                        value=base_config.parser.concurrency,
+                        step=1,
+                    )
+                with col2:
                     runtime_overrides["gemini.video_fps"] = st.number_input(
                         "模型视频采样帧率（gemini.video_fps）",
                         min_value=0.1,
@@ -613,7 +576,16 @@ def main() -> None:
                         value=float(base_config.gemini.video_fps),
                         step=0.1,
                     )
-                else:
+            else:
+                col1, col2 = st.columns(2)
+                with col1:
+                    runtime_overrides["parser.concurrency"] = st.number_input(
+                        "解析并发数（parser.concurrency）",
+                        min_value=1,
+                        max_value=50,
+                        value=base_config.parser.concurrency,
+                        step=1,
+                    )
                     runtime_overrides["volcengine.video_fps"] = st.number_input(
                         "模型视频采样帧率（volcengine.video_fps）",
                         min_value=0.2,
@@ -621,6 +593,7 @@ def main() -> None:
                         value=float(base_config.volcengine.video_fps),
                         step=0.1,
                     )
+                with col2:
                     thinking_options = ["enabled", "disabled", "auto"]
                     current_thinking = (base_config.volcengine.thinking_type or "enabled").strip().lower()
                     if current_thinking not in thinking_options:
@@ -638,76 +611,6 @@ def main() -> None:
                         "思考强度（volcengine.reasoning_effort）",
                         options=reasoning_options,
                         index=reasoning_options.index(current_reasoning),
-                    )
-                    volc_max_tokens_text = st.text_input(
-                        "最大输出 token（volcengine.max_completion_tokens，留空不下发）",
-                        value=(
-                            ""
-                            if base_config.volcengine.max_completion_tokens is None
-                            else str(base_config.volcengine.max_completion_tokens)
-                        ),
-                    )
-            with col2:
-                runtime_overrides["parser.pre_delay_min_seconds"] = st.number_input(
-                    "解析槽位冷却最小秒数（parser.pre_delay_min_seconds）",
-                    min_value=0.0,
-                    value=float(base_config.parser.pre_delay_min_seconds),
-                    step=0.1,
-                )
-                runtime_overrides["parser.pre_delay_max_seconds"] = st.number_input(
-                    "解析槽位冷却最大秒数（parser.pre_delay_max_seconds）",
-                    min_value=0.0,
-                    value=float(base_config.parser.pre_delay_max_seconds),
-                    step=0.1,
-                )
-                runtime_overrides["task.completion_delay_min_seconds"] = st.number_input(
-                    "任务完成后最小等待秒数（task.completion_delay_min_seconds）",
-                    min_value=0.0,
-                    value=float(base_config.task.completion_delay_min_seconds),
-                    step=0.1,
-                )
-                runtime_overrides["task.completion_delay_max_seconds"] = st.number_input(
-                    "任务完成后最大等待秒数（task.completion_delay_max_seconds）",
-                    min_value=0.0,
-                    value=float(base_config.task.completion_delay_max_seconds),
-                    step=0.1,
-                )
-            with col3:
-                parser_backoff_text = st.text_input(
-                    "Parser 重试退避序列（retry.parser_backoff_seconds）",
-                    value=",".join(str(x) for x in base_config.retry.parser_backoff_seconds),
-                )
-                gemini_backoff_text = st.text_input(
-                    "模型重试退避序列（retry.gemini_backoff_seconds）",
-                    value=",".join(str(x) for x in base_config.retry.gemini_backoff_seconds),
-                )
-                runtime_overrides["circuit_breaker.parser.consecutive_failures"] = st.number_input(
-                    "Parser 连续失败熔断阈值（circuit_breaker.parser.consecutive_failures）",
-                    min_value=1,
-                    value=base_config.circuit_breaker.parser.consecutive_failures,
-                    step=1,
-                )
-                runtime_overrides["circuit_breaker.gemini.consecutive_failures"] = st.number_input(
-                    "模型连续失败熔断阈值（circuit_breaker.gemini.consecutive_failures）",
-                    min_value=1,
-                    value=base_config.circuit_breaker.gemini.consecutive_failures,
-                    step=1,
-                )
-                if base_config.provider == "volcengine":
-                    runtime_overrides["volcengine.stream_usage"] = st.checkbox(
-                        "开启流式用量统计（volcengine.stream_usage）",
-                        value=bool(base_config.volcengine.stream_usage),
-                    )
-                    runtime_overrides["volcengine.use_batch_chat"] = st.checkbox(
-                        "开启批量 Chat（volcengine.use_batch_chat）",
-                        value=bool(base_config.volcengine.use_batch_chat),
-                    )
-                    runtime_overrides["volcengine.batch_size"] = st.number_input(
-                        "批量 Chat 批次大小（volcengine.batch_size）",
-                        min_value=1,
-                        max_value=50,
-                        value=int(base_config.volcengine.batch_size),
-                        step=1,
                     )
 
     default_user_prompt = ""
@@ -804,12 +707,6 @@ def main() -> None:
 
         try:
             config_manager.clear_overrides()
-            runtime_overrides["retry.parser_backoff_seconds"] = _parse_backoff(parser_backoff_text)
-            if app_mode != AppMode.DURATION_CHECK:
-                runtime_overrides["retry.gemini_backoff_seconds"] = _parse_backoff(gemini_backoff_text)
-            if app_mode != AppMode.DURATION_CHECK and base_config.provider == "volcengine":
-                token_text = (volc_max_tokens_text or "").strip()
-                runtime_overrides["volcengine.max_completion_tokens"] = int(token_text) if token_text else None
             config_manager.override_mapping(runtime_overrides)
             runtime_config = config_manager.get_config()
         except Exception as exc:  # noqa: BLE001
