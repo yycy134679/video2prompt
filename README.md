@@ -1,122 +1,98 @@
 # video2prompt
 
-批量解析抖音视频链接，支持 AI 模型解读与视频时长判断，结果导出为 Excel，支持一键导入 Lumen 平台。
+<div align="center">
+
+本地批量抖音视频解析与 AI 解读工具
+
+![Python](https://img.shields.io/badge/Python-3.11%2B-3776AB?style=flat-square&logo=python&logoColor=white)
+![Streamlit](https://img.shields.io/badge/UI-Streamlit-FF4B4B?style=flat-square&logo=streamlit&logoColor=white)
+![Pytest](https://img.shields.io/badge/Test-pytest-0A9EDC?style=flat-square&logo=pytest&logoColor=white)
+![SQLite](https://img.shields.io/badge/Cache-SQLite-003B57?style=flat-square&logo=sqlite&logoColor=white)
+
+[功能亮点](#功能亮点) • [快速开始](#快速开始) • [运行模式](#运行模式) • [配置说明](#配置说明) • [开发与测试](#开发与测试) • [故障排查](#故障排查)
+
+</div>
+
+`video2prompt` 用来批量处理抖音 / TikTok 链接：先通过本地解析服务拿到视频直链，再按所选模式执行 AI 解读或 `ffprobe` 时长探测，最后导出 Excel 或 Markdown ZIP。
+
+它适合这些场景：
+
+- 批量生成 TikTok 复刻提示词
+- 审查视频是否适合翻译搬运
+- 按类目沉淀脚本素材
+- 快速筛掉时长超过 15 秒的视频
+
+> [!IMPORTANT]
+> `scripts/start.sh` 不会自动激活虚拟环境。请先执行 `. .venv/bin/activate`，再启动应用。
 
 ## 功能亮点
 
-- **批量视频解读**：输入 pid 和抖音链接列表，自动解析视频直链并调用 AI 模型分析视频内容
-- **多模型支持**：支持 Gemini（中转站）和火山方舟（Doubao / Seed 系列），通过配置一键切换
-- **视频翻译审查**：结构化审查 6 项指标（儿童口播、多人口播、价格促销、字幕、贴纸花字、中文字符），自动判定能否翻译到 TikTok
-- **视频复刻提示词**：分析爆款抖音视频，生成 Sora 英文提示词用于 TikTok 内容复刻
-- **按类目分析模式**：支持输入 `pid + 链接 + 类目` 三列，自动将结果按类目聚合
-- **视频时长判断模式**：仅解析直链并通过 `ffprobe` 判断时长，固定阈值 `<=15s`，支持双 Excel 导出
-- **智能缓存**：基于链接 + Prompt 的 SHA-256 哈希去重，相同任务不重复调用模型
-- **弹性容错**：重试退避 + 熔断器 + 限流慢启动 + 视频拉取失败自动重解析
-- **高并发解析节奏**：支持 50 解析槽位，单槽位解析完成后冷却 3 秒再接下一条
-- **实时状态**：Streamlit 界面实时显示每条任务的状态、重试次数、耗时、Token 用量
-- **可中断执行**：运行中支持一键停止，立即取消待解析/解析中/模型解读中任务
-- **多格式导出**：支持模型结果 Excel、类目 Markdown ZIP，以及时长判断双 Excel 导出
+- 批量输入 `pid + 链接`，自动解析无水印视频直链并执行后续流程
+- 支持 `Gemini` 和 `火山方舟（Volcengine / Seed 2.0）` 两种模型服务商
+- 内置三种运行模式：`视频复刻提示词`、`按类目分析`、`视频时长判断`
+- 支持结构化“能否翻译”审查，覆盖儿童口播、多人口播、价格促销、字幕、贴纸/花字等维度
+- 本地 SQLite 缓存，避免相同链接 + Prompt 重复调用模型
+- 带重试、退避、熔断、限流慢启动和手动停止能力
+- 支持 Excel 导出，按类目模式还可导出 Markdown ZIP
+- Excel 导出结果可直接用于下游整理，默认模板位于 `docs/product_prompt_template.xlsx`
 
-## 前置条件
+## 工作流
 
-- Python 3.11+
-- 抖音解析服务（本地 Docker 部署，默认 `http://localhost:80`）
-- `ffprobe`（用于视频时长探测）
-- API Key：Gemini 或火山方舟（二选一，**仅模型解读模式需要**）
+```mermaid
+flowchart LR
+  A["批量输入<br/>pid / link / category"] --> B["本地解析服务<br/>获取视频直链"]
+  B --> C{"运行模式"}
+  C --> D["Gemini / 火山方舟<br/>视频解读"]
+  C --> E["ffprobe<br/>时长探测"]
+  D --> F["SQLite 缓存"]
+  D --> G["Excel 导出"]
+  D --> H["Markdown ZIP 导出"]
+  E --> I["双 Excel 导出"]
+```
 
 ## 快速开始
 
-### 1. 安装依赖
+### 1. 准备环境
+
+前置条件：
+
+- Python `3.11+`
+- 本地抖音解析服务，默认地址 `http://localhost:80`
+- 如果要使用“视频时长判断”模式，需要 `ffprobe`
+- 如果要使用 AI 解读模式，需要 `GEMINI_API_KEY` 或 `VOLCENGINE_API_KEY` / `ARK_API_KEY`
+
+> [!NOTE]
+> “视频时长判断”模式不会调用模型，因此不需要 AI API Key，但仍然需要本地解析服务。
+
+### 2. 创建虚拟环境并安装依赖
 
 ```bash
 python3 -m venv .venv
-source .venv/bin/activate
-pip install -e ".[dev]"
+. .venv/bin/activate
+python -m ensurepip --upgrade
+python -m pip install --upgrade pip setuptools wheel
+python -m pip install -e ".[dev]"
 ```
 
-### 2. 配置环境
-
-复制 `.env.example` 为 `.env`，填写对应的 API Key：
+### 3. 配置环境变量
 
 ```bash
 cp .env.example .env
 ```
 
-| 环境变量                              | 说明                  |
-| ------------------------------------- | --------------------- |
-| `GEMINI_API_KEY`                      | Gemini 中转站 API Key |
-| `VOLCENGINE_API_KEY` 或 `ARK_API_KEY` | 火山方舟 API Key      |
+`.env` 中按需填写：
 
-在 `config.yaml` 中设置 `provider` 为 `gemini` 或 `volcengine`，并按需调整模型参数。
-当 `provider=volcengine` 时，`volcengine.endpoint_id` 必填，`target_model` 需为 `seed-2.0-*`，并可通过 `volcengine.reasoning_effort` 调节思考强度（`minimal/low/medium/high`）。
-
-### 3. 启动服务
-
-```bash
-bash scripts/start.sh
+```env
+GEMINI_API_KEY=your_api_key_here
+VOLCENGINE_API_KEY=your_volcengine_api_key_here
+ARK_API_KEY=your_ark_api_key_here
 ```
 
-浏览器会自动打开 Streamlit 界面。
+### 4. 检查 `config.yaml`
 
-## 使用流程
+项目默认通过 `config.yaml` 控制模型服务商、并发、重试、熔断、缓存和日志路径。
 
-1. 选择**运行模式**：`视频复刻提示词`（默认）/ `按类目分析` / `视频时长判断`
-2. 在输入区填写任务：
-   - 默认模式：输入 **pid 列表**和**抖音链接列表**（按行一一对应）
-   - 按类目分析：输入 **pid / 抖音链接 / 类目** 三列（按行对齐，空类目自动归为「未分类」）
-   - 时长判断：输入 **pid / 抖音链接** 两列，执行“解析 + 时长探测”，不调用模型
-3. 在模型解读模式下可编辑或加载 **提示词**（DEFAULT_USER_PROMPT），并选择输出格式
-4. 按需调整**运行时配置**中的常用项（如并发、FPS、输出格式），仅本次运行生效；高级参数请改 `config.yaml`
-5. 点击 **开始执行**，实时查看任务进度（未真正进入解析槽位的任务显示为「待解析」）
-6. 如需提前终止，点击 **停止**：会取消待解析、解析中、模型解读中的未完成任务
-7. 执行完成或停止后：
-   - 默认模式：导出 Excel
-   - 按类目分析：可导出 Excel（含类目列）或导出 Markdown（按类目 ZIP）
-   - 时长判断：一键生成两份 Excel（`<=15s`、`>15s 或探测失败（含解析失败）`）
-   - 模型解读模式下，导出仅包含已完成且有模型输出的任务
-
-## 项目结构
-
-```
-video2prompt/
-├── app.py                          # Streamlit 入口与 UI
-├── config.yaml                     # 业务配置（模型、解析、重试、熔断等）
-├── .env                            # 敏感凭据（API Key，不入库）
-├── scripts/
-│   └── start.sh                    # 一键启动脚本
-├── src/video2prompt/
-│   ├── config.py                   # YAML + .env 配置管理，支持运行时覆盖
-│   ├── models.py                   # 数据模型（AppConfig / Task / TaskState 等）
-│   ├── task_scheduler.py           # 核心任务调度器：解析 → 缓存 → 模型 → 重试 → 熔断
-│   ├── duration_check_runner.py    # 时长判断执行器：解析 → ffprobe → 分桶
-│   ├── parser_client.py            # 抖音解析客户端（获取无水印视频直链）
-│   ├── gemini_client.py            # Gemini API 客户端
-│   ├── volcengine_client.py        # 火山方舟 Chat Completions 客户端
-│   ├── volcengine_files_client.py  # 火山方舟 Files API（视频上传/轮询/清理）
-│   ├── volcengine_responses_client.py  # 火山方舟 Responses API
-│   ├── volcengine_batch_client.py  # 火山方舟批量 Chat 接口
-│   ├── video_analysis_client.py    # 统一协议接口（Protocol）
-│   ├── review_result.py            # 审查结果解析与规则校正
-│   ├── cache_store.py              # SQLite 异步缓存
-│   ├── circuit_breaker.py          # 熔断器（连续失败 + 窗口失败率）
-│   ├── validator.py                # 输入校验（行对齐、域名合法性）
-│   ├── excel_exporter.py           # Excel 模板导出
-│   ├── duration_excel_exporter.py  # 时长判断双 Excel 导出
-│   ├── markdown_exporter.py        # Markdown 按类目导出 + ZIP 打包
-│   ├── logging_utils.py            # 日志（按天滚动 + API Key 脱敏）
-│   └── errors.py                   # 分层异常体系
-├── tests/                          # 单元测试
-├── docs/                           # 文档（提示词模板、审查规则等）
-├── exports/                        # 导出结果目录
-├── data/                           # 缓存数据库
-└── logs/                           # 日志文件
-```
-
-## 模型服务商配置
-
-### Gemini
-
-通过中转站访问 Gemini API，支持视频直链传入。
+Gemini 示例：
 
 ```yaml
 provider: "gemini"
@@ -124,116 +100,209 @@ provider: "gemini"
 gemini:
   base_url: "https://qfgapi.com"
   model: "gemini-3-flash-preview"
-  thinking_level: "high"           # minimal / low / medium / high
+  thinking_level: "high"
   media_resolution: "media_resolution_medium"
-  video_fps: 2.0                   # 视频采样帧率
-  fps_fallback: 1.0                # 主帧率失败后回退值
-  timeout_seconds: 300
+  video_fps: 2.0
 ```
 
-### 火山方舟（Volcengine）
-
-支持三种 API 调用模式，通过 `input_mode` 配置：
-
-| 模式             | 说明                          | 视频大小限制 |
-| ---------------- | ----------------------------- | ------------ |
-| `chat_url`       | 直接传视频 URL                | ≤ 50 MB      |
-| `responses_file` | 下载 → 上传 → 轮询激活 → 调用 | ≤ 512 MB     |
-| `auto`（默认）   | 根据视频大小自动选择          | 自适应       |
+火山方舟示例：
 
 ```yaml
 provider: "volcengine"
 
 volcengine:
   base_url: "https://ark.cn-beijing.volces.com/api/v3"
-  endpoint_id: "ep-xxxxxxxx"       # 推理接入点（实际作为请求体 model）
-  target_model: "seed-2.0-lite"    # 标注用，不作为请求参数
-  timeout_seconds: 300
-  video_fps: 2.0
-  thinking_type: "enabled"         # enabled / disabled / auto
-  reasoning_effort: "medium"       # minimal / low / medium / high
-  input_mode: "auto"               # auto / chat_url / responses_file
-  use_batch_chat: false            # 批量 Chat 模式（灰度）
-  batch_size: 20
+  endpoint_id: "ep-xxxxxxxx"
+  target_model: "seed-2.0-lite"
+  thinking_type: "enabled"
+  reasoning_effort: "high"
+  input_mode: "auto"
 ```
 
-## 弹性容错机制
+> [!IMPORTANT]
+> 当 `provider=volcengine` 时，`volcengine.endpoint_id` 必填，且 `volcengine.target_model` 必须以 `seed-2.0` 开头。
 
-### 重试与退避
-
-- **解析服务**：默认退避序列 `[10, 30]` 秒，可配置；最多重试 2 次
-- **模型服务**：默认退避序列 `[5, 15]` 秒，可配置；最多重试 2 次
-- **退避上限**：单次退避最终等待（含抖动）不超过 `30s`
-- **突发限流慢启动**：检测到 `RequestBurstTooFast` 时动态增大惩罚因子（最大 8x），成功后逐步衰减
-- **视频拉取失败自动重解析**：模型报视频资源拉取失败时，自动重新解析获取新直链
-
-### 熔断器
-
-双维度判断，解析服务和模型服务各自独立监控：
-
-| 维度                     | 解析服务默认值 | 模型服务默认值 |
-| ------------------------ | -------------- | -------------- |
-| 连续失败次数             | 4              | 4              |
-| 窗口失败率（5 分钟窗口） | 60%            | 50%            |
-
-触发熔断后，所有未完成任务标记为 `CIRCUIT_BREAK` 并停止执行。4xx 客户端错误和视频拉取失败不计入熔断统计。
-
-## 缓存策略
-
-- **存储引擎**：本地 SQLite（`data/cache.db`）
-- **缓存键**：`SHA-256(link) + SHA-256(prompt)` 复合主键
-- **缓存内容**：`aweme_id`、`video_url`、`gemini_output`、`can_translate`、`fps_used`
-- **冲突处理**：同键重跑自动更新（`ON CONFLICT DO UPDATE`）
-- **Prompt 持久化**：编辑后保存到 SQLite，下次启动自动加载
-- 可通过 `cache.include_prompt_hash_in_key` 控制是否将 Prompt 纳入缓存键
-
-## 任务状态机
-
-```
-WAITING → PARSING → INTERVAL → INTERPRETING → COMPLETED
-                                             → FAILED
-                                             → CIRCUIT_BREAK
-                                             → CANCELLED
-```
-
-- `WAITING`：待解析（尚未占用解析槽位）
-- `PARSING`：解析中（已实际发起解析请求）
-- `INTERPRETING`：模型解读中
-
-每次状态变更通过回调实时刷新 UI 表格，展示以下信息：
-
-| 字段                              | 说明                           |
-| --------------------------------- | ------------------------------ |
-| 状态                              | 当前任务阶段                   |
-| 解析重试 / 模型重试               | 各自重试次数                   |
-| 耗时(s)                           | 单任务总耗时                   |
-| 能否翻译                          | 审查结论                       |
-| FPS                               | 实际使用的采样帧率             |
-| prompt_tokens / completion_tokens | Token 用量                     |
-| reasoning_tokens                  | 思考 Token（仅 thinking 模式） |
-| request_id                        | 模型请求 ID（便于排查）        |
-| api_mode                          | 实际使用的 API 模式            |
-
-## 开发
-
-### 运行测试
+### 5. 启动应用
 
 ```bash
-source .venv/bin/activate
-pytest
+. .venv/bin/activate
+bash scripts/start.sh
 ```
 
-### 主要依赖
+如果你更习惯直接运行 Streamlit：
 
-| 包              | 用途             |
-| --------------- | ---------------- |
-| `streamlit`     | Web UI 框架      |
-| `httpx`         | 异步 HTTP 客户端 |
-| `aiosqlite`     | 异步 SQLite 驱动 |
-| `openpyxl`      | Excel 读写       |
-| `PyYAML`        | YAML 配置解析    |
-| `python-dotenv` | 环境变量加载     |
+```bash
+. .venv/bin/activate
+python -m streamlit run app.py --server.headless=false
+```
 
-## License
+启动后浏览器会打开本地页面。应用会在页面内检查解析服务健康状态。
 
-Private / Internal Use Only
+## 运行模式
+
+| 模式 | 输入 | 是否调用模型 | 主要输出 |
+| --- | --- | --- | --- |
+| 视频复刻提示词 | `pid + 链接` | 是 | 单个 Excel |
+| 按类目分析 | `pid + 链接 + 类目` | 是 | Excel + 按类目 Markdown ZIP |
+| 视频时长判断 | `pid + 链接` | 否 | 两个 Excel：`<=15s`、`>15s/探测失败` |
+
+### AI 解读模式
+
+默认包含两种输出格式：
+
+- `纯文本`：保留模型原始输出
+- `JSON`：按内置规则解析为“能否翻译 + 信息摘要”
+
+结构化审查会重点判断：
+
+- 儿童口播
+- 多人口播 / 声音切换
+- 明确价格或促销
+- 字幕
+- 贴纸 / 花字
+- 其他中文字符
+
+### 运行时配置覆盖
+
+页面支持调整部分高频参数，且**只对本次运行生效**，不会写回 `config.yaml`，例如：
+
+- `parser.concurrency`
+- `gemini.video_fps`
+- `volcengine.video_fps`
+- `volcengine.thinking_type`
+- `volcengine.reasoning_effort`
+- 输出格式
+
+高级参数如退避、熔断、批量 Chat、完成后等待时间，仍建议直接修改 `config.yaml`。
+
+## 配置说明
+
+### 环境变量
+
+| 变量名 | 用途 |
+| --- | --- |
+| `GEMINI_API_KEY` | Gemini 模式使用 |
+| `VOLCENGINE_API_KEY` | 火山方舟模式使用 |
+| `ARK_API_KEY` | 火山方舟 API Key 兼容变量 |
+
+### 关键配置项
+
+| 配置项 | 说明 |
+| --- | --- |
+| `provider` | 当前模型服务商，支持 `gemini` / `volcengine` |
+| `parser.base_url` | 解析服务地址，默认 `http://localhost:80` |
+| `parser.concurrency` | 解析并发，范围 `1-50` |
+| `retry.*` | 解析 / 模型退避序列与退避上限 |
+| `circuit_breaker.*` | 解析与模型的熔断阈值 |
+| `cache.db_path` | SQLite 缓存文件，默认 `data/cache.db` |
+| `logging.file_path` | 日志文件路径，默认 `logs/app.log` |
+
+### 缓存与导出
+
+- 缓存键基于 `SHA-256(link) + SHA-256(prompt)`
+- Prompt 会持久化到 SQLite，下次打开页面可直接恢复
+- 导出文件默认写入 `exports/`
+- 日志默认写入 `logs/app.log`
+- 缓存数据库默认写入 `data/cache.db`
+
+## 项目结构
+
+```text
+video2prompt/
+├── app.py
+├── config.yaml
+├── .env.example
+├── scripts/
+│   └── start.sh
+├── src/video2prompt/
+│   ├── config.py
+│   ├── task_scheduler.py
+│   ├── duration_check_runner.py
+│   ├── parser_client.py
+│   ├── gemini_client.py
+│   ├── volcengine_client.py
+│   ├── cache_store.py
+│   ├── review_result.py
+│   ├── excel_exporter.py
+│   ├── markdown_exporter.py
+│   └── ...
+├── tests/
+├── docs/
+│   └── product_prompt_template.xlsx
+└── exports/
+```
+
+## 开发与测试
+
+运行全量测试：
+
+```bash
+. .venv/bin/activate
+python -m pytest
+```
+
+运行单个测试文件：
+
+```bash
+. .venv/bin/activate
+python -m pytest tests/test_config.py
+python -m pytest tests/test_task_scheduler_output_format.py -k json
+```
+
+> [!TIP]
+> 当前仓库没有独立的 `ruff`、`black`、`mypy` 配置。修改后至少应跑相关 `pytest`，尤其是配置、调度器、导出器和客户端测试。
+
+开发时建议优先关注这些模块：
+
+- `app.py`：UI、运行控制、导出入口
+- `src/video2prompt/task_scheduler.py`：主调度链路
+- `src/video2prompt/duration_check_runner.py`：时长判断
+- `src/video2prompt/review_result.py`：JSON 输出解析与纠偏
+- `src/video2prompt/excel_exporter.py`：Excel 模板写入规则
+
+## 故障排查
+
+### 启动时报“依赖未安装”
+
+通常是因为没有先激活 `.venv`。
+
+```bash
+. .venv/bin/activate
+bash scripts/start.sh
+```
+
+### 启动时报“未找到 .env”
+
+先复制模板并填写 Key：
+
+```bash
+cp .env.example .env
+```
+
+### 时长判断模式失败，提示 `ffprobe`
+
+系统缺少 `ffprobe`。macOS 可使用：
+
+```bash
+brew install ffmpeg
+```
+
+### 页面提示解析服务不可用
+
+检查本地解析服务是否已启动，并确认 `config.yaml` 中的 `parser.base_url` 正确。
+
+### 导出失败
+
+优先检查：
+
+- `docs/product_prompt_template.xlsx` 是否存在
+- `exports/` 目录是否可写
+- 当前任务是否已有可导出的完成结果
+
+## 相关文档
+
+- [需求说明](./docs/requirements.md)
+- [按类目分析需求](./docs/requirements-v2-按类目分析.md)
+- [视频复刻提示词](./docs/视频复刻提示词.md)
+- [视频脚本拆解分析](./docs/视频脚本拆解分析.md)
+- [视频内容审查](./docs/视频内容审查.md)
