@@ -3,16 +3,15 @@ from __future__ import annotations
 from video2prompt.validator import InputValidator
 
 
-def test_validate_link_support_tiktok_and_douyin_domains() -> None:
-    assert InputValidator.validate_link("https://www.tiktok.com/@user/video/123")
-    assert InputValidator.validate_link("https://vm.tiktok.com/ZM123/")
-    assert InputValidator.validate_link("www.tiktok.com/@user/video/123")
+def test_validate_link_support_douyin_domains_and_share_text() -> None:
     assert InputValidator.validate_link("https://www.douyin.com/video/1")
     assert InputValidator.validate_link("https://v.douyin.com/abcd/")
+    assert InputValidator.validate_link("0.53 02/26 I@v.sE Fus:/ 标题 https://v.douyin.com/iRNBho6u/ 复制此链接")
 
 
 def test_validate_link_reject_other_domains() -> None:
     assert not InputValidator.validate_link("https://example.com/video/1")
+    assert not InputValidator.validate_link("https://www.tiktok.com/@user/video/123")
 
 
 def test_validate_line_count_with_category_allow_empty_category_cell() -> None:

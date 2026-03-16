@@ -2,7 +2,7 @@
 
 ## 项目概览
 
-`video2prompt` 是一个本地 Streamlit 工具，用于批量解析抖音/TikTok 链接，并执行以下任务：
+`video2prompt` 是一个本地 Streamlit 工具，用于批量解析抖音视频链接，并执行以下任务：
 
 - 生成视频复刻提示词
 - 按类目聚合视频分析结果
@@ -56,7 +56,7 @@ python -m pip install -e ".[dev]"
 
 - 复制环境变量模板：`cp .env.example .env`
 - 在 `.env` 中填写 `GEMINI_API_KEY` 或 `VOLCENGINE_API_KEY` / `ARK_API_KEY`
-- 确认本地抖音解析服务可访问，默认地址为 `http://localhost:80`
+- 准备可用的抖音网页 Cookie，并在页面中手动粘贴保存
 - 如果要使用“视频时长判断”模式，确保 `ffprobe` 在 `PATH` 中
 
 ## 常用开发命令
@@ -171,7 +171,7 @@ provider 约束：
 - `依赖未安装，请先执行: pip install -e .`：通常是没有激活 `.venv`
 - `未找到 .env`：先执行 `cp .env.example .env`
 - 时长判断失败且提示 `ffprobe`：本机未安装 ffmpeg/ffprobe
-- 解析失败：优先检查本地解析服务是否在 `config.yaml` 指定地址运行
+- 解析失败：优先检查页面中的 Cookie 是否已保存、是否过期，必要时重新从浏览器复制
 - 导出异常：先确认 `docs/product_prompt_template.xlsx` 存在且未损坏
 
 排查顺序建议：

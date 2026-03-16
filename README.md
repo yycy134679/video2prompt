@@ -13,11 +13,11 @@
 
 </div>
 
-`video2prompt` 用来批量处理抖音 / TikTok 链接：先通过本地解析服务拿到视频直链，再按所选模式执行 AI 解读或 `ffprobe` 时长探测，最后导出 Excel 或 Markdown ZIP。
+`video2prompt` 用来批量处理抖音链接：先通过内嵌抖音解析模块拿到视频直链，再按所选模式执行 AI 解读或 `ffprobe` 时长探测，最后导出 Excel 或 Markdown ZIP。
 
 它适合这些场景：
 
-- 批量生成 TikTok 复刻提示词
+- 批量生成短视频复刻提示词
 - 审查视频是否适合翻译搬运
 - 按类目沉淀脚本素材
 - 快速筛掉时长超过 15 秒的视频
@@ -28,6 +28,8 @@
 ## 功能亮点
 
 - 批量输入 `pid + 链接`，自动解析无水印视频直链并执行后续流程
+- 内嵌 Douyin-only 解析，不再依赖额外 HTTP 解析服务
+- 支持手动粘贴并持久化抖音 Cookie，重启应用后仍可继续使用
 - 支持 `Gemini` 和 `火山方舟（Volcengine / Seed 2.0）` 两种模型服务商
 - 内置三种运行模式：`视频复刻提示词`、`按类目分析`、`视频时长判断`
 - 支持结构化“能否翻译”审查，覆盖儿童口播、多人口播、价格促销、字幕、贴纸/花字等维度
@@ -40,14 +42,15 @@
 
 ```mermaid
 flowchart LR
-  A["批量输入<br/>pid / link / category"] --> B["本地解析服务<br/>获取视频直链"]
-  B --> C{"运行模式"}
-  C --> D["Gemini / 火山方舟<br/>视频解读"]
-  C --> E["ffprobe<br/>时长探测"]
-  D --> F["SQLite 缓存"]
-  D --> G["Excel 导出"]
-  D --> H["Markdown ZIP 导出"]
-  E --> I["双 Excel 导出"]
+  A["批量输入<br/>pid / link / category"] --> B["手动配置 Cookie"]
+  B --> C["内嵌抖音解析<br/>获取视频直链"]
+  C --> D{"运行模式"}
+  D --> E["Gemini / 火山方舟<br/>视频解读"]
+  D --> F["ffprobe<br/>时长探测"]
+  E --> G["SQLite 缓存"]
+  E --> H["Excel 导出"]
+  E --> I["Markdown ZIP 导出"]
+  F --> J["双 Excel 导出"]
 ```
 
 ## 快速开始
@@ -57,12 +60,12 @@ flowchart LR
 前置条件：
 
 - Python `3.11+`
-- 本地抖音解析服务，默认地址 `http://localhost:80`
+- 可用的抖音网页 Cookie（首次启动后在页面内手动粘贴保存）
 - 如果要使用“视频时长判断”模式，需要 `ffprobe`
 - 如果要使用 AI 解读模式，需要 `GEMINI_API_KEY` 或 `VOLCENGINE_API_KEY` / `ARK_API_KEY`
 
 > [!NOTE]
-> “视频时长判断”模式不会调用模型，因此不需要 AI API Key，但仍然需要本地解析服务。
+> “视频时长判断”模式不会调用模型，因此不需要 AI API Key，但仍然需要已配置的抖音 Cookie。
 
 ### 2. 创建虚拟环境并安装依赖
 
@@ -136,7 +139,10 @@ bash scripts/start.sh
 python -m streamlit run app.py --server.headless=false
 ```
 
-启动后浏览器会打开本地页面。应用会在页面内检查解析服务健康状态。
+启动后浏览器会打开本地页面。请先在“抖音 Cookie 配置”区域粘贴并保存 Cookie，再开始执行任务。
+
+> [!IMPORTANT]
+> 当前版本只支持抖音视频，不支持 TikTok 链接，也不支持抖音图集。
 
 ## 运行模式
 
@@ -190,7 +196,7 @@ python -m streamlit run app.py --server.headless=false
 | 配置项 | 说明 |
 | --- | --- |
 | `provider` | 当前模型服务商，支持 `gemini` / `volcengine` |
-| `parser.base_url` | 解析服务地址，默认 `http://localhost:80` |
+| `parser.base_url` | 兼容保留字段，当前版本读取但忽略 |
 | `parser.concurrency` | 解析并发，范围 `1-50` |
 | `retry.*` | 解析 / 模型退避序列与退避上限 |
 | `circuit_breaker.*` | 解析与模型的熔断阈值 |
@@ -201,6 +207,7 @@ python -m streamlit run app.py --server.headless=false
 
 - 缓存键基于 `SHA-256(link) + SHA-256(prompt)`
 - Prompt 会持久化到 SQLite，下次打开页面可直接恢复
+- Cookie 会持久化到 `~/Library/Application Support/video2prompt/user_state.yaml`
 - 导出文件默认写入 `exports/`
 - 日志默认写入 `logs/app.log`
 - 缓存数据库默认写入 `data/cache.db`
@@ -287,9 +294,13 @@ cp .env.example .env
 brew install ffmpeg
 ```
 
-### 页面提示解析服务不可用
+### 页面提示未配置 Cookie
 
-检查本地解析服务是否已启动，并确认 `config.yaml` 中的 `parser.base_url` 正确。
+先在页面的“抖音 Cookie 配置”区域粘贴并保存浏览器 Cookie。
+
+### 页面提示 Cookie 可能失效
+
+重新从浏览器复制最新 Cookie，再点击“保存 Cookie”。如果抖音网页要求验证码或二次验证，也需要先在浏览器里完成验证。
 
 ### 导出失败
 

@@ -24,9 +24,10 @@ from video2prompt.gemini_client import GeminiClient
 from video2prompt.logging_utils import setup_logging
 from video2prompt.markdown_exporter import MarkdownExporter
 from video2prompt.models import AppMode, Task, TaskInput
-from video2prompt.parser_client import ParserClient
+from video2prompt.parser_client import COOKIE_REQUIRED_MESSAGE, COOKIE_RETRY_HINT, ParserClient
 from video2prompt.review_result import DEFAULT_REVIEW_PROMPT
 from video2prompt.task_scheduler import TaskScheduler
+from video2prompt.user_state_store import UserStateStore
 from video2prompt.validator import InputValidator
 from video2prompt.volcengine_batch_client import VolcengineBatchClient
 from video2prompt.volcengine_client import VolcengineClient
@@ -45,6 +46,8 @@ SESSION_MARKDOWN_DOWNLOAD = "markdown_download_payload"
 SESSION_DURATION_SHORT_DOWNLOAD = "duration_short_download_payload"
 SESSION_DURATION_LONG_FAILED_DOWNLOAD = "duration_long_failed_download_payload"
 SESSION_RUN_CONTROLLER = "run_controller"
+SESSION_COOKIE_NOTICE = "cookie_notice"
+SESSION_COOKIE_FAILURE = "cookie_failure"
 
 
 @dataclass
@@ -151,7 +154,6 @@ async def _run_scheduler(
     volc_batch_client = None
 
     parser_client = ParserClient(
-        base_url=config.parser.base_url,
         timeout_seconds=config.parser.timeout_seconds,
         http_client=parser_http,
     )
@@ -253,7 +255,6 @@ async def _run_duration_checker(
 ):
     parser_http = httpx.AsyncClient(timeout=config.parser.timeout_seconds)
     parser_client = ParserClient(
-        base_url=config.parser.base_url,
         timeout_seconds=config.parser.timeout_seconds,
         http_client=parser_http,
     )
@@ -469,6 +470,81 @@ def _render_runtime_panel(controller: RunController | None) -> None:
     _panel()
 
 
+def _visible_tasks_for_cookie_status(controller: RunController | None) -> list[Task]:
+    if controller is not None and controller.tasks:
+        return controller.tasks
+    last_tasks = st.session_state.get("last_tasks")
+    if isinstance(last_tasks, list):
+        return [task for task in last_tasks if isinstance(task, Task)]
+    return []
+
+
+def _has_cookie_failure(tasks: list[Task]) -> bool:
+    return any(COOKIE_RETRY_HINT in (task.error_message or "") for task in tasks)
+
+
+def _resolve_cookie_failure_state(previous_failed: bool, notice: str, tasks: list[Task]) -> bool:
+    if notice in {"saved", "cleared"}:
+        return False
+    if tasks:
+        return _has_cookie_failure(tasks)
+    return previous_failed
+
+
+def _render_cookie_panel(user_state_store: UserStateStore, tasks: list[Task]) -> None:
+    notice = str(st.session_state.pop(SESSION_COOKIE_NOTICE, "") or "")
+    st.session_state[SESSION_COOKIE_FAILURE] = _resolve_cookie_failure_state(
+        previous_failed=bool(st.session_state.get(SESSION_COOKIE_FAILURE, False)),
+        notice=notice,
+        tasks=tasks,
+    )
+
+    state = user_state_store.load()
+    cookie_failed = bool(st.session_state.get(SESSION_COOKIE_FAILURE, False))
+
+    with st.expander("抖音 Cookie 配置", expanded=True):
+        if notice == "saved":
+            st.success("Cookie 已保存")
+        elif notice == "cleared":
+            st.info("Cookie 已清空")
+
+        if not state.has_cookie:
+            st.warning("状态：未配置 Cookie")
+        elif cookie_failed:
+            st.warning("状态：最近一次解析失败，可能已失效")
+        else:
+            st.success("状态：已保存 Cookie（未验证）")
+
+        st.caption(f"本地保存位置：{user_state_store.path}")
+        st.caption("Cookie 仅保存在当前用户目录，不会写回 config.yaml，也不会写入 SQLite 缓存。")
+        st.text_area(
+            "手动粘贴抖音 Cookie",
+            key="douyin_cookie_input",
+            height=120,
+            placeholder="请粘贴浏览器里复制出的完整 Cookie 字符串",
+        )
+        save_col, clear_col = st.columns(2)
+        with save_col:
+            if st.button("保存 Cookie", use_container_width=True):
+                try:
+                    user_state_store.save_cookie(str(st.session_state.get("douyin_cookie_input", "")))
+                except ValueError as exc:
+                    st.error(str(exc))
+                else:
+                    st.session_state["douyin_cookie_input"] = ""
+                    st.session_state[SESSION_COOKIE_NOTICE] = "saved"
+                    st.rerun()
+        with clear_col:
+            if st.button("清空 Cookie", use_container_width=True):
+                user_state_store.clear_cookie()
+                st.session_state["douyin_cookie_input"] = ""
+                st.session_state[SESSION_COOKIE_NOTICE] = "cleared"
+                st.rerun()
+
+    if cookie_failed:
+        st.warning(COOKIE_RETRY_HINT)
+
+
 def main() -> None:
     st.set_page_config(page_title="video2prompt", layout="wide")
     st.title("video2prompt - 批量视频解读")
@@ -505,6 +581,10 @@ def main() -> None:
         st.session_state[SESSION_DURATION_SHORT_DOWNLOAD] = None
     if SESSION_DURATION_LONG_FAILED_DOWNLOAD not in st.session_state:
         st.session_state[SESSION_DURATION_LONG_FAILED_DOWNLOAD] = None
+    if "douyin_cookie_input" not in st.session_state:
+        st.session_state["douyin_cookie_input"] = ""
+    if SESSION_COOKIE_FAILURE not in st.session_state:
+        st.session_state[SESSION_COOKIE_FAILURE] = False
 
     if base_config.provider == "gemini":
         st.caption(f"当前模型服务商：gemini（model={base_config.gemini.model}）")
@@ -526,13 +606,10 @@ def main() -> None:
     st.session_state["app_mode"] = selected_mode
     app_mode = AppMode(selected_mode)
 
-    with st.expander("服务状态", expanded=True):
-        checker = ParserClient(base_url=base_config.parser.base_url, timeout_seconds=5)
-        ok, msg = asyncio.run(checker.health_check())
-        if ok:
-            st.success(msg)
-        else:
-            st.warning(msg)
+    user_state_store = UserStateStore()
+    run_controller = _get_run_controller()
+    _sync_run_controller_state(run_controller)
+    _render_cookie_panel(user_state_store, _visible_tasks_for_cookie_status(run_controller))
 
     runtime_overrides: dict[str, Any] = {}
     output_format = OUTPUT_FORMAT_PLAIN_TEXT
@@ -636,7 +713,7 @@ def main() -> None:
             pid_total, pid_non_empty = _count_lines(pid_text)
             st.caption(f"行数：{pid_total}（非空行：{pid_non_empty}）")
         with link_col:
-            link_text = st.text_area("抖音/TikTok 链接列表（每行一个）", height=220)
+            link_text = st.text_area("抖音链接列表（每行一个）", height=220)
             link_total, link_non_empty = _count_lines(link_text)
             st.caption(f"行数：{link_total}（非空行：{link_non_empty}）")
         with category_col:
@@ -650,12 +727,10 @@ def main() -> None:
             pid_total, pid_non_empty = _count_lines(pid_text)
             st.caption(f"行数：{pid_total}（非空行：{pid_non_empty}）")
         with right:
-            link_text = st.text_area("抖音/TikTok 链接列表（每行一个）", height=220)
+            link_text = st.text_area("抖音链接列表（每行一个）", height=220)
             link_total, link_non_empty = _count_lines(link_text)
             st.caption(f"行数：{link_total}（非空行：{link_non_empty}）")
 
-    run_controller = _get_run_controller()
-    _sync_run_controller_state(run_controller)
     is_running = _is_run_active(run_controller)
 
     start_col, stop_col = st.columns(2)
@@ -686,6 +761,10 @@ def main() -> None:
 
         if not validation.is_valid:
             st.error(validation.error_message)
+            st.stop()
+
+        if not user_state_store.has_cookie():
+            st.error(COOKIE_REQUIRED_MESSAGE)
             st.stop()
 
         invalid = [item for item in inputs if not item.is_valid]

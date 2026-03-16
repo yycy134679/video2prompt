@@ -53,9 +53,9 @@ volcengine:
   # 批量 Chat 每批条数（建议 1-50）
   batch_size: 20
 
-# 抖音解析服务配置
+# 抖音解析配置
 parser:
-  # 解析服务地址（本地 Docker 服务）
+  # 兼容保留字段：当前版本不再依赖外部 HTTP 解析服务，读取但忽略
   base_url: "http://localhost:80"
   # 并发解析任务数（建议 1-5）
   concurrency: 5
