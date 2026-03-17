@@ -30,34 +30,20 @@ class AppMode(str, Enum):
 
 
 @dataclass
-class GeminiConfig:
-    base_url: str = "https://api.huandutech.com"
-    model: str = "gemini-3-flash-preview"
-    thinking_level: str = "high"
-    media_resolution: str = "media_resolution_medium"
-    video_fps: float = 2.0
-    fps_fallback: float = 1.0
-    timeout_seconds: int = 90
-
-
-@dataclass
 class VolcengineConfig:
     base_url: str = "https://ark.cn-beijing.volces.com/api/v3"
     endpoint_id: str = ""
-    target_model: str = "seed-2.0-lite"
     timeout_seconds: int = 90
     video_fps: float = 1.0
     thinking_type: str = "enabled"
     reasoning_effort: str = "medium"
-    max_completion_tokens: int | None = None
+    max_output_tokens: int | None = None
     input_mode: str = "auto"
-    chat_video_size_limit_mb: int = 50
+    video_url_size_limit_mb: int = 50
     files_video_size_limit_mb: int = 512
     files_expire_days: int = 7
     files_poll_timeout_seconds: int = 180
-    stream_usage: bool = False
-    use_batch_chat: bool = False
-    batch_size: int = 20
+    stream: bool = True
 
 
 @dataclass
@@ -116,8 +102,6 @@ class LoggingConfig:
 
 @dataclass
 class AppConfig:
-    provider: str = "gemini"
-    gemini: GeminiConfig = field(default_factory=GeminiConfig)
     volcengine: VolcengineConfig = field(default_factory=VolcengineConfig)
     parser: ParserConfig = field(default_factory=ParserConfig)
     retry: RetryConfig = field(default_factory=RetryConfig)
@@ -125,6 +109,10 @@ class AppConfig:
     task: TaskConfig = field(default_factory=TaskConfig)
     cache: CacheConfig = field(default_factory=CacheConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
+
+    @property
+    def provider(self) -> str:
+        return "volcengine"
 
 
 @dataclass

@@ -1,57 +1,31 @@
-# 模型服务商配置（gemini/volcengine）
-provider: "volcengine"
-
-# Gemini 视频理解服务配置
-gemini:
-  # Gemini 中转服务地址
-  base_url: "https://qfgapi.com"
-  # 使用的 Gemini 模型名称
-  model: "gemini-3-flash-preview"
-  # 思考强度（minimal/low/medium/high）
-  thinking_level: "high"
-  # 媒体分辨率（media_resolution_low/medium/high）
-  media_resolution: "media_resolution_medium"
-  # 视频采样帧率（每秒采样帧数）
-  video_fps: 2.0
-  # 帧率降级值（主帧率失败后回退）
-  fps_fallback: 1.0
-  # Gemini 请求超时时间（秒）
-  timeout_seconds: 300
-
-# 火山方舟视频理解服务配置
+# 火山方舟 Responses / Files 配置
 volcengine:
-  # 火山方舟 Chat API 基础地址
+  # 火山方舟 API 基础地址
   base_url: "https://ark.cn-beijing.volces.com/api/v3"
-  # 推理接入点 ID（请求体 model 字段实际使用此值）
+  # 推理接入点 ID
   endpoint_id: "ep-20260225230351-dx6fm"
-  # 目标模型名称（用于配置可读性，不直接作为请求体 model）
-  target_model: "seed-2.0-lite"
   # 火山请求超时时间（秒）
   timeout_seconds: 300
-  # 视频采样帧率（Chat API: video_url.fps，范围 0.2-5）
+  # 视频采样帧率（video_url 模式有效，范围 0.2-5）
   video_fps: 2.0
   # 思考模式（enabled/disabled/auto）
   thinking_type: "enabled"
-  # 思考强度（minimal/low/medium/high，仅在 thinking_type 非 disabled 时下发）
+  # 思考强度（minimal/low/medium/high）
   reasoning_effort: "high"
   # 最大输出 token 数（null 表示不显式下发）
-  max_completion_tokens: null
-  # 输入模式（auto/chat_url/responses_file）
+  max_output_tokens: null
+  # 输入模式（auto/video_url/file_id）
   input_mode: "auto"
-  # Chat URL 模式视频上限（MB，文档硬上限 50）
-  chat_video_size_limit_mb: 50
+  # video_url 模式视频上限（MB，文档硬上限 50）
+  video_url_size_limit_mb: 50
   # Files API 视频上限（MB，文档上限 512）
   files_video_size_limit_mb: 512
   # 上传文件过期天数（1-30）
   files_expire_days: 7
   # 文件激活轮询超时时间（秒）
   files_poll_timeout_seconds: 180
-  # 是否开启 stream usage 统计（灰度项）
-  stream_usage: false
-  # 是否开启批量 Chat 模式（灰度项）
-  use_batch_chat: false
-  # 批量 Chat 每批条数（建议 1-50）
-  batch_size: 20
+  # 是否开启流式 Responses 聚合
+  stream: true
 
 # 抖音解析配置
 parser:
@@ -70,11 +44,11 @@ parser:
 retry:
   # Parser 重试等待序列（秒）
   parser_backoff_seconds: [10, 30]
-  # Gemini 重试等待序列（秒）
+  # 模型重试等待序列（秒）
   gemini_backoff_seconds: [5, 15]
   # Parser 最大退避上限（秒）
   parser_backoff_cap_seconds: 30
-  # Gemini 最大退避上限（秒）
+  # 模型最大退避上限（秒）
   gemini_backoff_cap_seconds: 30
   # 兼容保留字段（当前版本调度器不再使用）
   pause_global_queue_during_backoff: true
@@ -89,7 +63,7 @@ circuit_breaker:
     consecutive_failures: 4
     # 窗口失败率阈值（0-1）
     failure_rate: 0.6
-  # Gemini 熔断阈值
+  # 模型熔断阈值
   gemini:
     # 连续失败次数阈值
     consecutive_failures: 4

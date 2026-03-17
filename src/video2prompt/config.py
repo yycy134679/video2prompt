@@ -17,7 +17,6 @@ from .models import (
     CacheConfig,
     CircuitBreakerConfig,
     CircuitServiceConfig,
-    GeminiConfig,
     LoggingConfig,
     ParserConfig,
     RetryConfig,
@@ -53,12 +52,6 @@ class ConfigManager:
             raise ConfigError("config.yaml 顶层必须是对象")
         return data
 
-    def get_gemini_api_key(self) -> str:
-        value = os.getenv("GEMINI_API_KEY", "").strip()
-        if not value:
-            raise ConfigError("缺少 GEMINI_API_KEY，请在 .env 中配置")
-        return value
-
     def get_volcengine_api_key(self) -> str:
         value = os.getenv("VOLCENGINE_API_KEY", "").strip() or os.getenv("ARK_API_KEY", "").strip()
         if not value:
@@ -66,12 +59,7 @@ class ConfigManager:
         return value
 
     def get_provider_api_key(self) -> str:
-        config = self.get_config()
-        if config.provider == "gemini":
-            return self.get_gemini_api_key()
-        if config.provider == "volcengine":
-            return self.get_volcengine_api_key()
-        raise ConfigError(f"不支持的 provider: {config.provider}")
+        return self.get_volcengine_api_key()
 
     def override(self, **kwargs: Any) -> None:
         """运行时覆盖配置。支持点路径键，例如 parser.concurrency=2。"""
@@ -121,8 +109,6 @@ class ConfigManager:
         merged = copy.deepcopy(defaults)
         self._deep_merge(merged, data)
 
-        provider = self._normalize_provider(str(merged.get("provider", "gemini")))
-        gemini = GeminiConfig(**self._as_dict(merged, "gemini"))
         volcengine = VolcengineConfig(**self._as_dict(merged, "volcengine"))
         volcengine.thinking_type = self._normalize_volc_thinking_type(volcengine.thinking_type)
         volcengine.reasoning_effort = self._normalize_volc_reasoning_effort(volcengine.reasoning_effort)
@@ -142,8 +128,6 @@ class ConfigManager:
         logging = LoggingConfig(**self._as_dict(merged, "logging"))
 
         config = AppConfig(
-            provider=provider,
-            gemini=gemini,
             volcengine=volcengine,
             parser=parser,
             retry=retry,
@@ -164,9 +148,6 @@ class ConfigManager:
 
     @staticmethod
     def _validate(config: AppConfig) -> None:
-        if config.provider not in {"gemini", "volcengine"}:
-            raise ConfigError("provider 必须是 gemini/volcengine")
-
         if not (1 <= config.parser.concurrency <= 50):
             raise ConfigError("parser.concurrency 必须在 1-50 之间")
         if config.parser.pre_delay_min_seconds < 0 or config.parser.pre_delay_max_seconds < 0:
@@ -174,36 +155,12 @@ class ConfigManager:
         if config.parser.pre_delay_min_seconds > config.parser.pre_delay_max_seconds:
             raise ConfigError("parser.pre_delay_min_seconds 不能大于 pre_delay_max_seconds")
 
-        if config.gemini.video_fps <= 0:
-            raise ConfigError("gemini.video_fps 必须 > 0")
-        if config.gemini.fps_fallback <= 0:
-            raise ConfigError("gemini.fps_fallback 必须 > 0")
-        thinking_level = ConfigManager._normalize_thinking_level(config.gemini.thinking_level)
-        allowed_thinking_levels = {"minimal", "low", "medium", "high"}
-        if thinking_level not in allowed_thinking_levels:
-            raise ConfigError("gemini.thinking_level 必须是 minimal/low/medium/high")
-
-        media_resolution = ConfigManager._normalize_media_resolution(config.gemini.media_resolution)
-        allowed_media_resolution = {
-            "media_resolution_low",
-            "media_resolution_medium",
-            "media_resolution_high",
-        }
-        if media_resolution not in allowed_media_resolution:
-            raise ConfigError("gemini.media_resolution 必须是 media_resolution_low/media_resolution_medium/media_resolution_high")
-
-        if config.gemini.timeout_seconds <= 0 or config.parser.timeout_seconds <= 0:
+        if config.parser.timeout_seconds <= 0:
             raise ConfigError("timeout_seconds 必须 > 0")
         if config.volcengine.timeout_seconds <= 0:
             raise ConfigError("volcengine.timeout_seconds 必须 > 0")
-        if config.provider == "volcengine" and not config.volcengine.endpoint_id.strip():
-            raise ConfigError("provider=volcengine 时，volcengine.endpoint_id 不能为空")
-        if config.provider == "volcengine" and not config.volcengine.target_model.strip():
-            raise ConfigError("provider=volcengine 时，volcengine.target_model 不能为空")
-        if config.provider == "volcengine":
-            target_model = config.volcengine.target_model.strip().lower()
-            if not target_model.startswith("seed-2.0"):
-                raise ConfigError("当前版本仅支持 seed-2.0 系列模型，请将 volcengine.target_model 设置为 seed-2.0-*")
+        if not config.volcengine.endpoint_id.strip():
+            raise ConfigError("volcengine.endpoint_id 不能为空")
         if not (0.2 <= float(config.volcengine.video_fps) <= 5):
             raise ConfigError("volcengine.video_fps 必须在 [0.2,5] 区间")
         thinking_type = ConfigManager._normalize_volc_thinking_type(config.volcengine.thinking_type)
@@ -212,27 +169,23 @@ class ConfigManager:
         reasoning_effort = ConfigManager._normalize_volc_reasoning_effort(config.volcengine.reasoning_effort)
         if reasoning_effort not in {"minimal", "low", "medium", "high"}:
             raise ConfigError("volcengine.reasoning_effort 必须是 minimal/low/medium/high")
-        if config.volcengine.max_completion_tokens is not None and int(config.volcengine.max_completion_tokens) <= 0:
-            raise ConfigError("volcengine.max_completion_tokens 必须为正整数或 null")
+        if config.volcengine.max_output_tokens is not None and int(config.volcengine.max_output_tokens) <= 0:
+            raise ConfigError("volcengine.max_output_tokens 必须为正整数或 null")
         input_mode = ConfigManager._normalize_volc_input_mode(config.volcengine.input_mode)
-        if input_mode not in {"auto", "chat_url", "responses_file"}:
-            raise ConfigError("volcengine.input_mode 必须是 auto/chat_url/responses_file")
-        if config.volcengine.chat_video_size_limit_mb <= 0 or config.volcengine.chat_video_size_limit_mb > 50:
-            raise ConfigError("volcengine.chat_video_size_limit_mb 必须在 1-50 之间")
+        if input_mode not in {"auto", "video_url", "file_id"}:
+            raise ConfigError("volcengine.input_mode 必须是 auto/video_url/file_id")
+        if config.volcengine.video_url_size_limit_mb <= 0 or config.volcengine.video_url_size_limit_mb > 50:
+            raise ConfigError("volcengine.video_url_size_limit_mb 必须在 1-50 之间")
         if config.volcengine.files_video_size_limit_mb <= 0 or config.volcengine.files_video_size_limit_mb > 512:
             raise ConfigError("volcengine.files_video_size_limit_mb 必须在 1-512 之间")
-        if config.volcengine.chat_video_size_limit_mb > config.volcengine.files_video_size_limit_mb:
-            raise ConfigError("volcengine.chat_video_size_limit_mb 不能大于 files_video_size_limit_mb")
+        if config.volcengine.video_url_size_limit_mb > config.volcengine.files_video_size_limit_mb:
+            raise ConfigError("volcengine.video_url_size_limit_mb 不能大于 files_video_size_limit_mb")
         if not (1 <= config.volcengine.files_expire_days <= 30):
             raise ConfigError("volcengine.files_expire_days 必须在 1-30 之间")
         if config.volcengine.files_poll_timeout_seconds <= 0:
             raise ConfigError("volcengine.files_poll_timeout_seconds 必须 > 0")
-        if not isinstance(config.volcengine.stream_usage, bool):
-            raise ConfigError("volcengine.stream_usage 必须是布尔值")
-        if not isinstance(config.volcengine.use_batch_chat, bool):
-            raise ConfigError("volcengine.use_batch_chat 必须是布尔值")
-        if config.volcengine.batch_size <= 0:
-            raise ConfigError("volcengine.batch_size 必须 > 0")
+        if not isinstance(config.volcengine.stream, bool):
+            raise ConfigError("volcengine.stream 必须是布尔值")
 
         if not config.retry.parser_backoff_seconds or not config.retry.gemini_backoff_seconds:
             raise ConfigError("retry backoff 列表不能为空")
@@ -267,25 +220,7 @@ class ConfigManager:
         if config.logging.retention_days <= 0:
             raise ConfigError("logging.retention_days 必须 > 0")
 
-        ConfigManager._validate_provider_api_key(config.provider)
-
-    @staticmethod
-    def _normalize_thinking_level(value: str) -> str:
-        return (value or "").strip().lower()
-
-    @staticmethod
-    def _normalize_media_resolution(value: str) -> str:
-        normalized = (value or "").strip().lower()
-        if normalized.startswith("media_resolution_"):
-            return normalized
-        if normalized.startswith("mediaresolution_"):
-            return normalized.replace("mediaresolution_", "media_resolution_", 1)
-        return normalized
-
-    @staticmethod
-    def _normalize_provider(value: str) -> str:
-        normalized = (value or "").strip().lower()
-        return normalized or "gemini"
+        ConfigManager._validate_volcengine_api_key()
 
     @staticmethod
     def _normalize_volc_thinking_type(value: str) -> str:
@@ -301,13 +236,7 @@ class ConfigManager:
         return (value or "").strip().lower()
 
     @staticmethod
-    def _validate_provider_api_key(provider: str) -> None:
-        if provider == "gemini":
-            if not os.getenv("GEMINI_API_KEY", "").strip():
-                raise ConfigError("provider=gemini 时缺少 GEMINI_API_KEY，请在 .env 中配置")
-            return
-
-        if provider == "volcengine":
-            volc_key = os.getenv("VOLCENGINE_API_KEY", "").strip() or os.getenv("ARK_API_KEY", "").strip()
-            if not volc_key:
-                raise ConfigError("provider=volcengine 时缺少 VOLCENGINE_API_KEY（或 ARK_API_KEY），请在 .env 中配置")
+    def _validate_volcengine_api_key() -> None:
+        volc_key = os.getenv("VOLCENGINE_API_KEY", "").strip() or os.getenv("ARK_API_KEY", "").strip()
+        if not volc_key:
+            raise ConfigError("缺少 VOLCENGINE_API_KEY（或 ARK_API_KEY），请在 .env 中配置")
