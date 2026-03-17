@@ -66,10 +66,9 @@ class VolcengineFilesClient:
             if close_client:
                 await client.aclose()
 
-    async def upload_file(self, path: str, fps: float, model: str, expire_days: int = 7) -> str:
+    async def upload_file(self, path: str, fps: float, expire_days: int = 7) -> str:
         """上传视频文件并返回 file_id。"""
         del fps  # File ID 路径不使用 fps，保留签名便于调度层统一调用。
-        del model
 
         close_client = False
         client = self._http_client

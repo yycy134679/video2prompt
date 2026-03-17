@@ -80,7 +80,7 @@ class _RetryModel:
             "reasoning_tokens": 0,
             "cached_tokens": 0,
             "request_id": "req-1",
-            "api_mode": "chat",
+            "api_mode": "responses_video_url",
         }
 
 
@@ -89,8 +89,8 @@ class _StubFilesClient:
         del url, max_mb
         return "/tmp/fake.mp4"
 
-    async def upload_file(self, path: str, fps: float, model: str, expire_days: int = 7) -> str:
-        del path, fps, model, expire_days
+    async def upload_file(self, path: str, fps: float, expire_days: int = 7) -> str:
+        del path, fps, expire_days
         return "file-123"
 
     async def poll_file_ready(self, file_id: str, timeout_seconds: int) -> None:
@@ -114,7 +114,7 @@ class _StubResponsesClient:
             "reasoning_tokens": 1,
             "cached_tokens": 0,
             "request_id": "req-resp",
-            "api_mode": "responses",
+            "api_mode": "responses_file_id",
         }
 
 
@@ -142,13 +142,11 @@ def _make_scheduler(
 def _make_volc_config(**kwargs) -> AppConfig:  # noqa: ANN003
     volc = VolcengineConfig(
         endpoint_id="ep-test",
-        target_model="seed-2.0-lite",
-        input_mode="chat_url",
+        input_mode="video_url",
     )
     for key, value in kwargs.items():
         setattr(volc, key, value)
     return AppConfig(
-        provider="volcengine",
         volcengine=volc,
         parser=ParserConfig(concurrency=1, pre_delay_min_seconds=0.0, pre_delay_max_seconds=0.0, timeout_seconds=30),
         retry=RetryConfig(
@@ -226,7 +224,7 @@ def test_large_video_switches_to_responses_file() -> None:
     responses_client = _StubResponsesClient()
     scheduler = _make_scheduler(
         model,
-        _make_volc_config(input_mode="auto", chat_video_size_limit_mb=50, files_video_size_limit_mb=512),
+        _make_volc_config(input_mode="auto", video_url_size_limit_mb=50, files_video_size_limit_mb=512),
         files_client=files_client,
         responses_client=responses_client,
     )
@@ -238,12 +236,12 @@ def test_large_video_switches_to_responses_file() -> None:
 
     asyncio.run(_run())
     assert task.state.value == "完成"
-    assert task.model_api_mode == "responses"
+    assert task.model_api_mode == "responses_file_id"
     assert task.gemini_output == "responses-ok"
     assert model.calls == 0
 
 
-def test_chat_fetch_timeout_auto_fallback_to_responses_file() -> None:
+def test_video_url_fetch_timeout_auto_fallback_to_file_id() -> None:
     model = _RetryModel(
         errors=[GeminiError("火山状态码 400: code=InvalidParameter | Timeout while connecting: https://v16m.tiktokcdn.com/x.mp4")],
         output="chat-should-not-run",
@@ -253,7 +251,7 @@ def test_chat_fetch_timeout_auto_fallback_to_responses_file() -> None:
     responses_client = _StubResponsesClient()
     scheduler = _make_scheduler(
         model,
-        _make_volc_config(input_mode="auto", chat_video_size_limit_mb=50, files_video_size_limit_mb=512),
+        _make_volc_config(input_mode="auto", video_url_size_limit_mb=50, files_video_size_limit_mb=512),
         files_client=files_client,
         responses_client=responses_client,
     )
@@ -265,7 +263,7 @@ def test_chat_fetch_timeout_auto_fallback_to_responses_file() -> None:
 
     asyncio.run(_run())
     assert task.state.value == "完成"
-    assert task.model_api_mode == "responses"
+    assert task.model_api_mode == "responses_file_id"
     assert task.gemini_output == "responses-ok"
     assert model.calls == 1
 

@@ -28,7 +28,6 @@ from .models import AppConfig, ParseResult, Task, TaskState
 from .parser_client import ParserClient
 from .review_result import extract_can_translate, split_review_columns
 from .video_analysis_client import VideoAnalysisClient
-from .volcengine_batch_client import VolcengineBatchClient
 from .volcengine_files_client import VolcengineFilesClient
 from .volcengine_responses_client import VolcengineResponsesClient
 
@@ -55,7 +54,6 @@ class TaskScheduler:
         logger: logging.Logger | None = None,
         volcengine_files_client: VolcengineFilesClient | None = None,
         volcengine_responses_client: VolcengineResponsesClient | None = None,
-        volcengine_batch_client: VolcengineBatchClient | None = None,
     ):
         self.parser = parser
         self.model_client = model_client
@@ -66,7 +64,6 @@ class TaskScheduler:
         self.logger = logger or logging.getLogger("video2prompt")
         self.volcengine_files_client = volcengine_files_client
         self.volcengine_responses_client = volcengine_responses_client
-        self.volcengine_batch_client = volcengine_batch_client
 
         self._circuit_reason: str | None = None
         self._default_user_prompt = ""
@@ -98,10 +95,6 @@ class TaskScheduler:
             cancel_event = asyncio.Event()
 
         try:
-            if self._is_batch_chat_enabled():
-                await self._run_batch_chat_mode(tasks, on_update=on_update, cancel_event=cancel_event)
-                return
-
             semaphore = asyncio.Semaphore(self.config.parser.concurrency)
             coros = [self.execute_task(task, semaphore, on_update=on_update, cancel_event=cancel_event) for task in tasks]
             await asyncio.gather(*coros)
@@ -156,102 +149,6 @@ class TaskScheduler:
             task.end_time = datetime.now()
             self._emit(task, on_update)
             await self._completion_delay(cancel_event=cancel_event)
-
-    async def _run_batch_chat_mode(
-        self,
-        tasks: list[Task],
-        on_update: TaskCallback | None,
-        cancel_event: asyncio.Event,
-    ) -> None:
-        """批量模式：解析仍逐条执行，Chat 解读按批提交，失败回退单条。"""
-        semaphore = asyncio.Semaphore(self.config.parser.concurrency)
-        pending_chat: list[Task] = []
-
-        try:
-            for task in tasks:
-                if task.start_time is None:
-                    task.start_time = datetime.now()
-
-                try:
-                    if cancel_event.is_set():
-                        task.state = TaskState.CANCELLED
-                        self._emit(task, on_update)
-                        continue
-
-                    await self._prepare_task_for_model(task, semaphore, on_update, cancel_event)
-                    if task.cache_hit:
-                        continue
-
-                    if task.model_api_mode == "responses":
-                        await self._model_with_retry(task, on_update, cancel_event)
-                        task.state = TaskState.COMPLETED
-                        self._emit(task, on_update)
-                    else:
-                        pending_chat.append(task)
-                        continue
-                except asyncio.CancelledError:
-                    task.state = TaskState.CANCELLED
-                    task.error_message = "任务已取消"
-                    self._emit(task, on_update)
-                except CircuitBreakerOpenError as exc:
-                    task.state = TaskState.CIRCUIT_BREAK
-                    task.error_message = str(exc)
-                    self._emit(task, on_update)
-                except Exception as exc:  # noqa: BLE001
-                    task.state = TaskState.FAILED
-                    task.error_message = str(exc)
-                    self.logger.exception("任务执行失败 pid=%s link=%s", task.pid, task.original_link)
-                    self._emit(task, on_update)
-                finally:
-                    if task not in pending_chat:
-                        task.end_time = datetime.now()
-                        self._emit(task, on_update)
-                        await self._completion_delay(cancel_event=cancel_event)
-
-            batch_size = max(1, int(getattr(self.config.volcengine, "batch_size", 20)))
-            for chunk in self._chunk_tasks(pending_chat, batch_size):
-                if cancel_event.is_set():
-                    for task in chunk:
-                        task.state = TaskState.CANCELLED
-                        task.end_time = datetime.now()
-                        self._emit(task, on_update)
-                    continue
-
-                batch_ok = await self._try_batch_chat_chunk(chunk, cancel_event=cancel_event)
-                if not batch_ok:
-                    self.logger.warning("批量 Chat 执行失败，回退单条模式，batch_size=%s", len(chunk))
-                    for task in chunk:
-                        try:
-                            await self._model_with_retry(task, on_update, cancel_event)
-                            task.state = TaskState.COMPLETED
-                            self._emit(task, on_update)
-                        except asyncio.CancelledError:
-                            task.state = TaskState.CANCELLED
-                            task.error_message = "任务已取消"
-                            self._emit(task, on_update)
-                        except CircuitBreakerOpenError as exc:
-                            task.state = TaskState.CIRCUIT_BREAK
-                            task.error_message = str(exc)
-                            self._emit(task, on_update)
-                        except Exception as exc:  # noqa: BLE001
-                            task.state = TaskState.FAILED
-                            task.error_message = str(exc)
-                            self.logger.exception("任务执行失败 pid=%s link=%s", task.pid, task.original_link)
-                            self._emit(task, on_update)
-                        finally:
-                            task.end_time = datetime.now()
-                            self._emit(task, on_update)
-                            await self._completion_delay(cancel_event=cancel_event)
-                    continue
-
-                for task in chunk:
-                    task.state = TaskState.COMPLETED
-                    task.end_time = datetime.now()
-                    self._emit(task, on_update)
-                    await self._completion_delay(cancel_event=cancel_event)
-        finally:
-            if cancel_event.is_set():
-                self._mark_cancelled(tasks, on_update)
 
     async def _prepare_task_for_model(
         self,
@@ -346,7 +243,7 @@ class TaskScheduler:
     ) -> None:
         backoff_seq = self.config.retry.gemini_backoff_seconds
         max_attempts = min(len(backoff_seq) + 1, self.MAX_RETRIES_PER_SERVICE + 1)
-        api_mode = task.model_api_mode or "chat"
+        api_mode = task.model_api_mode or "responses_video_url"
 
         for attempt in range(1, max_attempts + 1):
             if cancel_event.is_set():
@@ -386,10 +283,14 @@ class TaskScheduler:
                     self.gemini_breaker.record_failure()
                     self.logger.warning("模型可重试错误: %s", exc)
 
-                if is_fetch_error and api_mode == "chat":
-                    switched = await self._try_fallback_chat_to_responses(task, message=message, cancel_event=cancel_event)
+                if is_fetch_error and api_mode == "responses_video_url":
+                    switched = await self._try_fallback_video_url_to_file_id(
+                        task,
+                        message=message,
+                        cancel_event=cancel_event,
+                    )
                     if switched:
-                        api_mode = "responses"
+                        api_mode = "responses_file_id"
                         continue
                     self.logger.info("检测到视频资源拉取失败，尝试重新解析直链")
                     await self._reparse_video_url(task, cancel_event=cancel_event)
@@ -420,10 +321,14 @@ class TaskScheduler:
                     self.gemini_breaker.record_failure()
                     self.logger.error("模型不可重试错误: %s", exc)
 
-                if is_fetch_error and api_mode == "chat":
-                    switched = await self._try_fallback_chat_to_responses(task, message=message, cancel_event=cancel_event)
+                if is_fetch_error and api_mode == "responses_video_url":
+                    switched = await self._try_fallback_video_url_to_file_id(
+                        task,
+                        message=message,
+                        cancel_event=cancel_event,
+                    )
                     if switched:
-                        api_mode = "responses"
+                        api_mode = "responses_file_id"
                         continue
                     try:
                         await self._reparse_video_url(task, cancel_event=cancel_event)
@@ -438,26 +343,15 @@ class TaskScheduler:
                 raise
 
     async def _invoke_model(self, task: Task, api_mode: str, cancel_event: asyncio.Event) -> tuple[str, float]:
-        if self.config.provider == "volcengine":
-            if api_mode == "responses":
-                return await self._invoke_responses_with_file(task, cancel_event=cancel_event)
-            output, fps_used = await self._await_with_cancel(
-                self.model_client.interpret_video(
-                    video_uri=task.video_url,
-                    user_prompt=self._default_user_prompt,
-                    fps=self.config.volcengine.video_fps,
-                    fps_fallback=None,
-                ),
-                cancel_event=cancel_event,
-            )
-            return output, fps_used
+        if api_mode == "responses_file_id":
+            return await self._invoke_responses_with_file(task, cancel_event=cancel_event)
 
         output, fps_used = await self._await_with_cancel(
             self.model_client.interpret_video(
                 video_uri=task.video_url,
                 user_prompt=self._default_user_prompt,
-                fps=self.config.gemini.video_fps,
-                fps_fallback=self.config.gemini.fps_fallback,
+                fps=self.config.volcengine.video_fps,
+                fps_fallback=None,
             ),
             cancel_event=cancel_event,
         )
@@ -465,7 +359,7 @@ class TaskScheduler:
 
     async def _invoke_responses_with_file(self, task: Task, cancel_event: asyncio.Event) -> tuple[str, float]:
         if self.volcengine_files_client is None or self.volcengine_responses_client is None:
-            raise GeminiError("responses_file 模式缺少 Files/Responses 客户端")
+            raise GeminiError("responses_file_id 模式缺少 Files/Responses 客户端")
 
         temp_path = ""
         file_id = ""
@@ -481,7 +375,6 @@ class TaskScheduler:
                 self.volcengine_files_client.upload_file(
                     temp_path,
                     fps=self.config.volcengine.video_fps,
-                    model=self.config.volcengine.endpoint_id,
                     expire_days=self.config.volcengine.files_expire_days,
                 ),
                 cancel_event=cancel_event,
@@ -511,35 +404,31 @@ class TaskScheduler:
                     pass
 
     async def _resolve_model_api_mode(self, task: Task, cancel_event: asyncio.Event) -> str:
-        if self.config.provider != "volcengine":
-            return "chat"
-
         input_mode = (self.config.volcengine.input_mode or "auto").strip().lower()
-        chat_limit = self.config.volcengine.chat_video_size_limit_mb
+        video_url_limit = self.config.volcengine.video_url_size_limit_mb
         files_limit = self.config.volcengine.files_video_size_limit_mb
         size_mb = await self._probe_video_size_mb(task.video_url, cancel_event=cancel_event)
 
-        if input_mode == "chat_url":
-            if size_mb is not None and size_mb > chat_limit:
+        if input_mode == "video_url":
+            if size_mb is not None and size_mb > video_url_limit:
                 raise GeminiError(
-                    f"视频文件过大（{size_mb:.1f} MiB > Chat 上限 {chat_limit} MiB），请切换 input_mode=responses_file/auto"
+                    f"视频文件过大（{size_mb:.1f} MiB > video_url 上限 {video_url_limit} MiB），请切换 input_mode=file_id/auto"
                 )
-            return "chat"
+            return "responses_video_url"
 
-        if input_mode == "responses_file":
+        if input_mode == "file_id":
             if size_mb is not None and size_mb > files_limit:
                 raise GeminiError(
                     f"视频文件过大（{size_mb:.1f} MiB > Files 上限 {files_limit} MiB），已超过平台限制"
                 )
-            return "responses"
+            return "responses_file_id"
 
-        # auto
         if size_mb is None:
-            return "chat"
-        if size_mb <= chat_limit:
-            return "chat"
+            return "responses_video_url"
+        if size_mb <= video_url_limit:
+            return "responses_video_url"
         if size_mb <= files_limit:
-            return "responses"
+            return "responses_file_id"
         raise GeminiError(f"视频文件过大（{size_mb:.1f} MiB > Files 上限 {files_limit} MiB），已超过平台限制")
 
     async def _probe_video_size_mb(self, url: str, cancel_event: asyncio.Event | None = None) -> float | None:
@@ -567,7 +456,7 @@ class TaskScheduler:
                 size = self._size_from_headers(resp.headers)
                 return size
         except Exception as exc:  # noqa: BLE001
-            self.logger.warning("视频大小探测失败（将回退 Chat URL 路径）: %s", exc)
+            self.logger.warning("视频大小探测失败（将回退 video_url 路径）: %s", exc)
             return None
 
     @staticmethod
@@ -587,21 +476,9 @@ class TaskScheduler:
                 return int(total) / (1024 * 1024)
         return None
 
-    def _inject_model_observation(self, task: Task, api_mode: str, batch_payload: dict[str, Any] | None = None) -> None:
-        if batch_payload is not None:
-            usage = batch_payload.get("usage") if isinstance(batch_payload, dict) else {}
-            if not isinstance(usage, dict):
-                usage = {}
-            task.model_prompt_tokens = int(usage.get("prompt_tokens", 0) or 0)
-            task.model_completion_tokens = int(usage.get("completion_tokens", 0) or 0)
-            task.model_reasoning_tokens = int(usage.get("reasoning_tokens", 0) or 0)
-            task.model_cached_tokens = int(usage.get("cached_tokens", 0) or 0)
-            task.model_request_id = str(batch_payload.get("request_id", "") or "")
-            task.model_api_mode = str(batch_payload.get("api_mode", "batch") or "batch")
-            return
-
+    def _inject_model_observation(self, task: Task, api_mode: str) -> None:
         source: Any = self.model_client
-        if api_mode == "responses":
+        if api_mode == "responses_file_id":
             source = self.volcengine_responses_client
 
         consume = getattr(source, "consume_last_observation", None)
@@ -640,14 +517,12 @@ class TaskScheduler:
         task.aweme_id = result.aweme_id
         task.video_url = result.video_url
 
-    async def _try_fallback_chat_to_responses(
+    async def _try_fallback_video_url_to_file_id(
         self,
         task: Task,
         message: str,
         cancel_event: asyncio.Event,
     ) -> bool:
-        if self.config.provider != "volcengine":
-            return False
         input_mode = (self.config.volcengine.input_mode or "auto").strip().lower()
         if input_mode != "auto":
             return False
@@ -658,15 +533,15 @@ class TaskScheduler:
         files_limit = float(self.config.volcengine.files_video_size_limit_mb)
         if size_mb is not None and size_mb > files_limit:
             self.logger.warning(
-                "视频直链访问失败且无法回退 responses_file：文件过大 %.1f MiB > %.1f MiB, err=%s",
+                "视频直链访问失败且无法回退 file_id：文件过大 %.1f MiB > %.1f MiB, err=%s",
                 size_mb,
                 files_limit,
                 message,
             )
             return False
 
-        task.model_api_mode = "responses"
-        self.logger.info("检测到 Chat URL 拉取失败，自动回退 responses_file 重试")
+        task.model_api_mode = "responses_file_id"
+        self.logger.info("检测到 video_url 拉取失败，自动回退 file_id 重试")
         return True
 
     async def _parse_with_slot_cooldown(
@@ -789,64 +664,6 @@ class TaskScheduler:
         if size <= 0:
             return [tasks]
         return [tasks[i : i + size] for i in range(0, len(tasks), size)]
-
-    def _is_batch_chat_enabled(self) -> bool:
-        return (
-            self.config.provider == "volcengine"
-            and self.config.volcengine.use_batch_chat
-            and self.volcengine_batch_client is not None
-        )
-
-    async def _try_batch_chat_chunk(self, tasks: list[Task], cancel_event: asyncio.Event | None = None) -> bool:
-        if not tasks or self.volcengine_batch_client is None:
-            return False
-
-        request_items: list[dict[str, Any]] = []
-        for idx, task in enumerate(tasks):
-            request_items.append(
-                {
-                    "custom_id": task.pid or f"task-{idx}",
-                    "video_url": task.video_url,
-                    "prompt": self._default_user_prompt,
-                    "fps": self.config.volcengine.video_fps,
-                }
-            )
-
-        try:
-            if cancel_event is None:
-                results = await self.volcengine_batch_client.batch_chat(request_items)
-            else:
-                results = await self._await_with_cancel(
-                    self.volcengine_batch_client.batch_chat(request_items),
-                    cancel_event=cancel_event,
-                )
-            result_map: dict[str, dict[str, Any]] = {}
-            for item in results:
-                cid = str(item.get("custom_id", "") or "")
-                if cid:
-                    result_map[cid] = item
-
-            for idx, task in enumerate(tasks):
-                if cancel_event is not None and cancel_event.is_set():
-                    raise asyncio.CancelledError("任务已取消")
-                key = task.pid or f"task-{idx}"
-                if key not in result_map:
-                    raise GeminiError(f"Batch 返回缺少 custom_id={key}")
-                payload = result_map[key]
-                raw_text = str(payload.get("text", "") or "").strip()
-                task.can_translate, task.gemini_output = self._parse_output_by_format(raw_text)
-                if not task.gemini_output:
-                    raise GeminiError(f"Batch 返回空文本 custom_id={key}")
-                task.fps_used = self.config.volcengine.video_fps
-                self._inject_model_observation(task, "batch", batch_payload=payload)
-                await self._save_task_cache(task)
-                self.logger.info("批量解读成功 pid=%s", task.pid, extra=build_model_log_extra(task))
-                self.gemini_breaker.record_success()
-            self._burst_penalty_factor = max(1.0, self._burst_penalty_factor * 0.8)
-            return True
-        except Exception as exc:  # noqa: BLE001
-            self.logger.warning("批量 Chat 请求失败: %s", exc)
-            return False
 
     def _mark_cancelled(self, tasks: list[Task], on_update: TaskCallback | None) -> None:
         for task in tasks:

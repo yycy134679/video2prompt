@@ -22,7 +22,6 @@ from video2prompt.duration_check_runner import DurationCheckRunner
 from video2prompt.duration_excel_exporter import DurationExcelExporter
 from video2prompt.errors import ConfigError
 from video2prompt.excel_exporter import ExcelExporter
-from video2prompt.gemini_client import GeminiClient
 from video2prompt.logging_utils import setup_logging
 from video2prompt.markdown_exporter import MarkdownExporter
 from video2prompt.models import AppMode, Task, TaskInput
@@ -31,8 +30,6 @@ from video2prompt.review_result import DEFAULT_REVIEW_PROMPT
 from video2prompt.task_scheduler import TaskScheduler
 from video2prompt.user_state_store import UserStateStore
 from video2prompt.validator import InputValidator
-from video2prompt.volcengine_batch_client import VolcengineBatchClient
-from video2prompt.volcengine_client import VolcengineClient
 from video2prompt.volcengine_files_client import VolcengineFilesClient
 from video2prompt.volcengine_responses_client import VolcengineResponsesClient
 
@@ -158,67 +155,31 @@ async def _run_scheduler(
     on_update=None,
 ):
     parser_http = httpx.AsyncClient(timeout=config.parser.timeout_seconds)
-    model_timeout = config.gemini.timeout_seconds if config.provider == "gemini" else config.volcengine.timeout_seconds
+    model_timeout = config.volcengine.timeout_seconds
     model_http = httpx.AsyncClient(timeout=model_timeout)
-    volc_files_client = None
-    volc_responses_client = None
-    volc_batch_client = None
 
     parser_client = ParserClient(
         timeout_seconds=config.parser.timeout_seconds,
         http_client=parser_http,
     )
-    if config.provider == "gemini":
-        model_client = GeminiClient(
-            base_url=config.gemini.base_url,
-            model=config.gemini.model,
-            api_key=api_key,
-            timeout_seconds=config.gemini.timeout_seconds,
-            thinking_level=config.gemini.thinking_level,
-            media_resolution=config.gemini.media_resolution,
-            http_client=model_http,
-        )
-    elif config.provider == "volcengine":
-        model_client = VolcengineClient(
-            base_url=config.volcengine.base_url,
-            endpoint_id=config.volcengine.endpoint_id,
-            target_model=config.volcengine.target_model,
-            api_key=api_key,
-            timeout_seconds=config.volcengine.timeout_seconds,
-            thinking_type=config.volcengine.thinking_type,
-            reasoning_effort=config.volcengine.reasoning_effort,
-            max_completion_tokens=config.volcengine.max_completion_tokens,
-            stream_usage=config.volcengine.stream_usage,
-            http_client=model_http,
-        )
-        volc_files_client = VolcengineFilesClient(
-            base_url=config.volcengine.base_url,
-            api_key=api_key,
-            timeout_seconds=config.volcengine.timeout_seconds,
-            http_client=model_http,
-        )
-        volc_responses_client = VolcengineResponsesClient(
-            base_url=config.volcengine.base_url,
-            endpoint_id=config.volcengine.endpoint_id,
-            api_key=api_key,
-            timeout_seconds=config.volcengine.timeout_seconds,
-            thinking_type=config.volcengine.thinking_type,
-            reasoning_effort=config.volcengine.reasoning_effort,
-            max_completion_tokens=config.volcengine.max_completion_tokens,
-            http_client=model_http,
-        )
-        volc_batch_client = VolcengineBatchClient(
-            base_url=config.volcengine.base_url,
-            endpoint_id=config.volcengine.endpoint_id,
-            api_key=api_key,
-            timeout_seconds=config.volcengine.timeout_seconds,
-            thinking_type=config.volcengine.thinking_type,
-            reasoning_effort=config.volcengine.reasoning_effort,
-            max_completion_tokens=config.volcengine.max_completion_tokens,
-            http_client=model_http,
-        )
-    else:
-        raise ConfigError(f"不支持的 provider: {config.provider}")
+    volc_files_client = VolcengineFilesClient(
+        base_url=config.volcengine.base_url,
+        api_key=api_key,
+        timeout_seconds=config.volcengine.timeout_seconds,
+        http_client=model_http,
+    )
+    volc_responses_client = VolcengineResponsesClient(
+        base_url=config.volcengine.base_url,
+        endpoint_id=config.volcengine.endpoint_id,
+        api_key=api_key,
+        timeout_seconds=config.volcengine.timeout_seconds,
+        thinking_type=config.volcengine.thinking_type,
+        reasoning_effort=config.volcengine.reasoning_effort,
+        max_output_tokens=config.volcengine.max_output_tokens,
+        stream=config.volcengine.stream,
+        http_client=model_http,
+    )
+    model_client = volc_responses_client
 
     parser_breaker = CircuitBreaker(
         consecutive_threshold=config.circuit_breaker.parser.consecutive_failures,
@@ -241,7 +202,6 @@ async def _run_scheduler(
         logger=logger,
         volcengine_files_client=volc_files_client,
         volcengine_responses_client=volc_responses_client,
-        volcengine_batch_client=volc_batch_client,
     )
 
     try:
@@ -642,13 +602,10 @@ def main() -> None:
     if SESSION_COOKIE_FAILURE not in st.session_state:
         st.session_state[SESSION_COOKIE_FAILURE] = False
 
-    if base_config.provider == "gemini":
-        st.caption(f"当前模型服务商：gemini（model={base_config.gemini.model}）")
-    else:
-        st.caption(
-            "当前模型服务商：volcengine "
-            f"（endpoint_id={base_config.volcengine.endpoint_id}，target_model={base_config.volcengine.target_model}）"
-        )
+    st.caption(
+        "当前模型服务商：volcengine "
+        f"（endpoint_id={base_config.volcengine.endpoint_id}，input_mode={base_config.volcengine.input_mode}）"
+    )
 
     app_mode_options = [mode.value for mode in AppMode]
     current_mode = str(st.session_state.get("app_mode", AppMode.VIDEO_PROMPT.value))
@@ -691,60 +648,41 @@ def main() -> None:
             )
             output_format = OUTPUT_FORMAT_LABEL_TO_VALUE[output_format_label]
             st.session_state["output_format"] = output_format
-            if base_config.provider == "gemini":
-                col1, col2 = st.columns(2)
-                with col1:
-                    runtime_overrides["parser.concurrency"] = st.number_input(
-                        "解析并发数（parser.concurrency）",
-                        min_value=1,
-                        max_value=50,
-                        value=base_config.parser.concurrency,
-                        step=1,
-                    )
-                with col2:
-                    runtime_overrides["gemini.video_fps"] = st.number_input(
-                        "模型视频采样帧率（gemini.video_fps）",
-                        min_value=0.1,
-                        max_value=20.0,
-                        value=float(base_config.gemini.video_fps),
-                        step=0.1,
-                    )
-            else:
-                col1, col2 = st.columns(2)
-                with col1:
-                    runtime_overrides["parser.concurrency"] = st.number_input(
-                        "解析并发数（parser.concurrency）",
-                        min_value=1,
-                        max_value=50,
-                        value=base_config.parser.concurrency,
-                        step=1,
-                    )
-                    runtime_overrides["volcengine.video_fps"] = st.number_input(
-                        "模型视频采样帧率（volcengine.video_fps）",
-                        min_value=0.2,
-                        max_value=5.0,
-                        value=float(base_config.volcengine.video_fps),
-                        step=0.1,
-                    )
-                with col2:
-                    thinking_options = ["enabled", "disabled", "auto"]
-                    current_thinking = (base_config.volcengine.thinking_type or "enabled").strip().lower()
-                    if current_thinking not in thinking_options:
-                        current_thinking = "enabled"
-                    runtime_overrides["volcengine.thinking_type"] = st.selectbox(
-                        "思考模式（volcengine.thinking_type）",
-                        options=thinking_options,
-                        index=thinking_options.index(current_thinking),
-                    )
-                    reasoning_options = ["minimal", "low", "medium", "high"]
-                    current_reasoning = (base_config.volcengine.reasoning_effort or "medium").strip().lower()
-                    if current_reasoning not in reasoning_options:
-                        current_reasoning = "medium"
-                    runtime_overrides["volcengine.reasoning_effort"] = st.selectbox(
-                        "思考强度（volcengine.reasoning_effort）",
-                        options=reasoning_options,
-                        index=reasoning_options.index(current_reasoning),
-                    )
+            col1, col2 = st.columns(2)
+            with col1:
+                runtime_overrides["parser.concurrency"] = st.number_input(
+                    "解析并发数（parser.concurrency）",
+                    min_value=1,
+                    max_value=50,
+                    value=base_config.parser.concurrency,
+                    step=1,
+                )
+                runtime_overrides["volcengine.video_fps"] = st.number_input(
+                    "模型视频采样帧率（volcengine.video_fps）",
+                    min_value=0.2,
+                    max_value=5.0,
+                    value=float(base_config.volcengine.video_fps),
+                    step=0.1,
+                )
+            with col2:
+                thinking_options = ["enabled", "disabled", "auto"]
+                current_thinking = (base_config.volcengine.thinking_type or "enabled").strip().lower()
+                if current_thinking not in thinking_options:
+                    current_thinking = "enabled"
+                runtime_overrides["volcengine.thinking_type"] = st.selectbox(
+                    "思考模式（volcengine.thinking_type）",
+                    options=thinking_options,
+                    index=thinking_options.index(current_thinking),
+                )
+                reasoning_options = ["minimal", "low", "medium", "high"]
+                current_reasoning = (base_config.volcengine.reasoning_effort or "medium").strip().lower()
+                if current_reasoning not in reasoning_options:
+                    current_reasoning = "medium"
+                runtime_overrides["volcengine.reasoning_effort"] = st.selectbox(
+                    "思考强度（volcengine.reasoning_effort）",
+                    options=reasoning_options,
+                    index=reasoning_options.index(current_reasoning),
+                )
 
     default_user_prompt = ""
     if app_mode != AppMode.DURATION_CHECK:
@@ -871,7 +809,7 @@ def main() -> None:
             )
         else:
             try:
-                api_key = config_manager.get_provider_api_key()
+                api_key = config_manager.get_volcengine_api_key()
             except ConfigError as exc:
                 st.error(f"配置错误: {exc}")
                 st.stop()

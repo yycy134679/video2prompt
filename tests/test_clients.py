@@ -11,28 +11,32 @@ from video2prompt.errors import (
     ParserCookieRetryableError,
     ParserUnsupportedContentError,
 )
-from video2prompt.gemini_client import GeminiClient
 from video2prompt.parser_client import COOKIE_RETRY_HINT, ParserClient
 from video2prompt.user_state_store import UserStateStore
+from video2prompt.volcengine_responses_client import VolcengineResponsesClient
 
 
-def test_gemini_build_request_body_contains_fps() -> None:
-    client = GeminiClient(
-        base_url="https://api.huandutech.com",
-        model="gemini-3-flash-preview",
+def test_responses_build_request_body_contains_video_url_and_fps() -> None:
+    client = VolcengineResponsesClient(
+        base_url="https://ark.cn-beijing.volces.com/api/v3",
+        endpoint_id="ep-test",
         api_key="x",
+        reasoning_effort="high",
+        max_output_tokens=256,
     )
-    body = client.build_request_body(
-        video_uri="https://example.com/video.mp4",
-        user_prompt="系统提示",
-        fps=2.0,
+    body = client._build_request_body(
+        input_items=client._build_video_url_input(
+            video_url="https://example.com/video.mp4",
+            prompt="系统提示",
+            fps=2.0,
+        )
     )
 
-    part = body["contents"][0]["parts"][0]
-    assert part["videoMetadata"]["fps"] == 2.0
-    assert part["fileData"]["fileUri"] == "https://example.com/video.mp4"
-    assert body["generationConfig"]["thinkingConfig"]["thinkingLevel"] == "high"
-    assert body["generationConfig"]["mediaResolution"] == "MEDIA_RESOLUTION_MEDIUM"
+    part = body["input"][0]["content"][0]
+    assert part["fps"] == 2.0
+    assert part["video_url"] == "https://example.com/video.mp4"
+    assert body["reasoning"]["effort"] == "high"
+    assert body["max_output_tokens"] == 256
 
 
 def test_parser_select_video_url_prefers_h264_and_highest_bitrate() -> None:
