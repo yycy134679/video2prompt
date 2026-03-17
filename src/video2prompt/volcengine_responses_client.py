@@ -6,7 +6,7 @@ from typing import Any
 
 import httpx
 
-from .errors import GeminiError, GeminiRetryableError
+from .errors import ModelError, ModelRetryableError
 from .review_result import DEFAULT_REVIEW_PROMPT
 
 
@@ -24,7 +24,6 @@ class VolcengineResponsesClient:
         thinking_type: str = "enabled",
         reasoning_effort: str = "medium",
         max_output_tokens: int | None = None,
-        max_completion_tokens: int | None = None,
         stream: bool = False,
         http_client: httpx.AsyncClient | None = None,
     ):
@@ -34,9 +33,7 @@ class VolcengineResponsesClient:
         self.timeout_seconds = timeout_seconds
         self.thinking_type = (thinking_type or "").strip().lower() or "enabled"
         self.reasoning_effort = (reasoning_effort or "").strip().lower() or "medium"
-        self.max_output_tokens = (
-            max_output_tokens if max_output_tokens is not None else max_completion_tokens
-        )
+        self.max_output_tokens = max_output_tokens
         self.stream = bool(stream)
         self._http_client = http_client
         self._default_user_prompt = self.DEFAULT_USER_PROMPT
@@ -57,12 +54,12 @@ class VolcengineResponsesClient:
         body = self._build_request_body(
             input_items=self._build_video_url_input(video_url=video_uri, prompt=user_prompt, fps=fps)
         )
-        text = await self._request_and_extract(body=body, api_mode="responses_video_url")
+        text = await self._request_and_extract(body=body, api_mode="video_url")
         return text, fps
 
     async def create_response_with_file_id(self, file_id: str, prompt: str) -> str:
         body = self._build_request_body(input_items=self._build_file_id_input(file_id=file_id, prompt=prompt))
-        return await self._request_and_extract(body=body, api_mode="responses_file_id")
+        return await self._request_and_extract(body=body, api_mode="file_id")
 
     def _build_request_body(self, input_items: list[dict[str, Any]]) -> dict[str, Any]:
         body: dict[str, Any] = {
@@ -129,14 +126,14 @@ class VolcengineResponsesClient:
 
             resp = await client.post(url, headers=headers, json=body)
             if resp.status_code in {429, 500, 502, 503, 504}:
-                raise GeminiRetryableError(f"Responses 状态码 {resp.status_code}: {resp.text[:500]}")
+                raise ModelRetryableError(f"Responses 状态码 {resp.status_code}: {resp.text[:500]}")
             if resp.status_code >= 400:
-                raise GeminiError(f"Responses 状态码 {resp.status_code}: {resp.text[:500]}")
+                raise ModelError(f"Responses 状态码 {resp.status_code}: {resp.text[:500]}")
 
             payload = resp.json()
             text = self._extract_text(payload)
             if not text:
-                raise GeminiError("Responses 返回为空")
+                raise ModelError("Responses 返回为空")
             self._last_observation = {
                 **self._last_observation,
                 **self.extract_usage(payload),
@@ -145,11 +142,11 @@ class VolcengineResponsesClient:
             }
             return text
         except ValueError as exc:
-            raise GeminiRetryableError(f"Responses JSON 解析失败: {exc}") from exc
+            raise ModelRetryableError(f"Responses JSON 解析失败: {exc}") from exc
         except httpx.TimeoutException as exc:
-            raise GeminiRetryableError(f"Responses 请求超时: {exc}") from exc
+            raise ModelRetryableError(f"Responses 请求超时: {exc}") from exc
         except httpx.HTTPError as exc:
-            raise GeminiRetryableError(f"Responses 请求异常: {exc}") from exc
+            raise ModelRetryableError(f"Responses 请求异常: {exc}") from exc
         finally:
             if close_client:
                 await client.aclose()
@@ -169,9 +166,9 @@ class VolcengineResponsesClient:
 
         async with client.stream("POST", url, headers=headers, json=body) as resp:
             if resp.status_code in {429, 500, 502, 503, 504}:
-                raise GeminiRetryableError(f"Responses 状态码 {resp.status_code}: {resp.text[:500]}")
+                raise ModelRetryableError(f"Responses 状态码 {resp.status_code}: {resp.text[:500]}")
             if resp.status_code >= 400:
-                raise GeminiError(f"Responses 状态码 {resp.status_code}: {resp.text[:500]}")
+                raise ModelError(f"Responses 状态码 {resp.status_code}: {resp.text[:500]}")
 
             request_id = self._extract_request_id(resp, {})
             async for line in resp.aiter_lines():
@@ -211,7 +208,7 @@ class VolcengineResponsesClient:
         if not text and completed_response:
             text = self._extract_text(completed_response)
         if not text:
-            raise GeminiError("Responses 流式返回为空")
+            raise ModelError("Responses 流式返回为空")
         return text
 
     @staticmethod

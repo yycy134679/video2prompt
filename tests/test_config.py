@@ -15,7 +15,6 @@ def _write(path: Path, text: str) -> None:
 def test_volcengine_only_config_loads_without_provider_or_gemini(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
     monkeypatch.setenv("VOLCENGINE_API_KEY", "volc_test_key")
     monkeypatch.delenv("ARK_API_KEY", raising=False)
 
@@ -41,7 +40,6 @@ volcengine:
 def test_override_updates_volcengine_and_parser_fields(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
     monkeypatch.setenv("VOLCENGINE_API_KEY", "volc_test_key")
     monkeypatch.delenv("ARK_API_KEY", raising=False)
 
@@ -68,7 +66,6 @@ parser:
 
 
 def test_config_invalid_concurrency(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
     monkeypatch.setenv("VOLCENGINE_API_KEY", "volc_test_key")
     monkeypatch.delenv("ARK_API_KEY", raising=False)
 
@@ -90,7 +87,6 @@ parser:
 
 
 def test_config_invalid_concurrency_too_high(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
     monkeypatch.setenv("VOLCENGINE_API_KEY", "volc_test_key")
     monkeypatch.delenv("ARK_API_KEY", raising=False)
 
@@ -114,7 +110,6 @@ parser:
 def test_config_invalid_retry_backoff_cap_too_large(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
     monkeypatch.setenv("VOLCENGINE_API_KEY", "volc_test_key")
     monkeypatch.delenv("ARK_API_KEY", raising=False)
 
@@ -137,7 +132,6 @@ retry:
 
 
 def test_get_volcengine_api_key_missing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
     monkeypatch.delenv("VOLCENGINE_API_KEY", raising=False)
     monkeypatch.delenv("ARK_API_KEY", raising=False)
 
@@ -157,7 +151,6 @@ volcengine:
 
 
 def test_volcengine_missing_endpoint(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
     monkeypatch.setenv("VOLCENGINE_API_KEY", "volc_test_key")
     monkeypatch.delenv("ARK_API_KEY", raising=False)
 
@@ -177,7 +170,6 @@ volcengine:
 
 
 def test_volcengine_get_api_key(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
     monkeypatch.setenv("VOLCENGINE_API_KEY", "volc_test_key")
     monkeypatch.delenv("ARK_API_KEY", raising=False)
 
@@ -197,7 +189,6 @@ volcengine:
 
 
 def test_volcengine_invalid_video_fps(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
     monkeypatch.setenv("VOLCENGINE_API_KEY", "volc_test_key")
     monkeypatch.delenv("ARK_API_KEY", raising=False)
 
@@ -218,7 +209,6 @@ volcengine:
 
 
 def test_volcengine_invalid_input_mode(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
     monkeypatch.setenv("VOLCENGINE_API_KEY", "volc_test_key")
     monkeypatch.delenv("ARK_API_KEY", raising=False)
 
@@ -241,7 +231,6 @@ volcengine:
 def test_volcengine_invalid_reasoning_effort(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
     monkeypatch.setenv("VOLCENGINE_API_KEY", "volc_test_key")
     monkeypatch.delenv("ARK_API_KEY", raising=False)
 
@@ -264,7 +253,6 @@ volcengine:
 def test_volcengine_invalid_video_url_size_limit(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
     monkeypatch.setenv("VOLCENGINE_API_KEY", "volc_test_key")
     monkeypatch.delenv("ARK_API_KEY", raising=False)
 
@@ -287,7 +275,6 @@ volcengine:
 def test_config_invalid_logging_retention_days(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
     monkeypatch.setenv("VOLCENGINE_API_KEY", "volc_test_key")
     monkeypatch.delenv("ARK_API_KEY", raising=False)
 

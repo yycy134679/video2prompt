@@ -7,7 +7,7 @@ from dataclasses import dataclass
 import pytest
 
 from video2prompt.circuit_breaker import CircuitBreaker
-from video2prompt.errors import GeminiError, GeminiRetryableError
+from video2prompt.errors import ModelError, ModelRetryableError
 from video2prompt.models import (
     AppConfig,
     ParseResult,
@@ -80,7 +80,7 @@ class _RetryModel:
             "reasoning_tokens": 0,
             "cached_tokens": 0,
             "request_id": "req-1",
-            "api_mode": "responses_video_url",
+            "api_mode": "video_url",
         }
 
 
@@ -114,7 +114,7 @@ class _StubResponsesClient:
             "reasoning_tokens": 1,
             "cached_tokens": 0,
             "request_id": "req-resp",
-            "api_mode": "responses_file_id",
+            "api_mode": "file_id",
         }
 
 
@@ -160,7 +160,7 @@ def _make_volc_config(**kwargs) -> AppConfig:  # noqa: ANN003
 
 
 def test_request_burst_too_fast_uses_penalty_backoff() -> None:
-    model = _RetryModel(errors=[GeminiRetryableError("火山状态码 429: code=RequestBurstTooFast")])
+    model = _RetryModel(errors=[ModelRetryableError("火山状态码 429: code=RequestBurstTooFast")])
     scheduler = _make_scheduler(model, _make_volc_config())
     task = Task(pid="1", original_link="https://example.com/share/1")
     calls: list[float] = []
@@ -190,7 +190,7 @@ def test_request_burst_too_fast_uses_penalty_backoff() -> None:
 
 
 def test_server_overloaded_uses_normal_backoff() -> None:
-    model = _RetryModel(errors=[GeminiRetryableError("火山状态码 429: code=ServerOverloaded")])
+    model = _RetryModel(errors=[ModelRetryableError("火山状态码 429: code=ServerOverloaded")])
     scheduler = _make_scheduler(model, _make_volc_config())
     task = Task(pid="2", original_link="https://example.com/share/2")
     calls: list[float] = []
@@ -218,7 +218,7 @@ def test_server_overloaded_uses_normal_backoff() -> None:
     assert calls == [0.0]
 
 
-def test_large_video_switches_to_responses_file() -> None:
+def test_large_video_switches_to_file_id() -> None:
     model = _RetryModel(errors=[], output="chat-should-not-run")
     files_client = _StubFilesClient()
     responses_client = _StubResponsesClient()
@@ -236,14 +236,14 @@ def test_large_video_switches_to_responses_file() -> None:
 
     asyncio.run(_run())
     assert task.state.value == "完成"
-    assert task.model_api_mode == "responses_file_id"
+    assert task.model_api_mode == "file_id"
     assert task.model_output == "responses-ok"
     assert model.calls == 0
 
 
 def test_video_url_fetch_timeout_auto_fallback_to_file_id() -> None:
     model = _RetryModel(
-        errors=[GeminiError("火山状态码 400: code=InvalidParameter | Timeout while connecting: https://v16m.tiktokcdn.com/x.mp4")],
+        errors=[ModelError("火山状态码 400: code=InvalidParameter | Timeout while connecting: https://v16m.tiktokcdn.com/x.mp4")],
         output="chat-should-not-run",
         fetch_error=True,
     )
@@ -263,7 +263,7 @@ def test_video_url_fetch_timeout_auto_fallback_to_file_id() -> None:
 
     asyncio.run(_run())
     assert task.state.value == "完成"
-    assert task.model_api_mode == "responses_file_id"
+    assert task.model_api_mode == "file_id"
     assert task.model_output == "responses-ok"
     assert model.calls == 1
 

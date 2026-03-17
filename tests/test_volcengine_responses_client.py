@@ -6,7 +6,7 @@ import json
 import httpx
 import pytest
 
-from video2prompt.errors import GeminiError, GeminiRetryableError
+from video2prompt.errors import ModelError, ModelRetryableError
 from video2prompt.volcengine_responses_client import VolcengineResponsesClient
 
 
@@ -60,7 +60,7 @@ def test_interpret_video_builds_responses_video_url_payload() -> None:
     assert observation["completion_tokens"] == 34
     assert observation["reasoning_tokens"] == 5
     assert observation["request_id"] == "req-video-url"
-    assert observation["api_mode"] == "responses_video_url"
+    assert observation["api_mode"] == "video_url"
 
 
 def test_create_response_with_file_id_success() -> None:
@@ -110,7 +110,7 @@ def test_create_response_with_file_id_success() -> None:
     assert observation["completion_tokens"] == 34
     assert observation["cached_tokens"] == 3
     assert observation["request_id"] == "req-resp-1"
-    assert observation["api_mode"] == "responses_file_id"
+    assert observation["api_mode"] == "file_id"
 
 
 def test_create_response_stream_aggregates_text_and_usage() -> None:
@@ -146,7 +146,7 @@ def test_create_response_stream_aggregates_text_and_usage() -> None:
     assert observation["prompt_tokens"] == 10
     assert observation["completion_tokens"] == 20
     assert observation["request_id"] == "req-stream"
-    assert observation["api_mode"] == "responses_file_id"
+    assert observation["api_mode"] == "file_id"
 
 
 def test_create_response_with_file_id_empty_output() -> None:
@@ -164,7 +164,7 @@ def test_create_response_with_file_id_empty_output() -> None:
             )
             await client.create_response_with_file_id("file-123", "请分析视频")
 
-    with pytest.raises(GeminiError):
+    with pytest.raises(ModelError):
         asyncio.run(_run())
 
 
@@ -183,5 +183,5 @@ def test_create_response_with_file_id_retryable() -> None:
             )
             await client.create_response_with_file_id("file-123", "请分析视频")
 
-    with pytest.raises(GeminiRetryableError):
+    with pytest.raises(ModelRetryableError):
         asyncio.run(_run())

@@ -33,12 +33,12 @@ class ParserCookieRetryableError(ParserRetryableError):
     """Cookie 失效、风控或验证码导致的可重试异常。"""
 
 
-class GeminiError(Video2PromptError):
-    """Gemini 服务异常。"""
+class ModelError(Video2PromptError):
+    """模型服务异常。"""
 
 
-class GeminiRetryableError(GeminiError):
-    """可重试的 Gemini 异常。"""
+class ModelRetryableError(ModelError):
+    """可重试的模型异常。"""
 
 
 class CircuitBreakerOpenError(Video2PromptError):

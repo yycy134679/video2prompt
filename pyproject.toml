@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "video2prompt"
 version = "0.1.0"
-description = "本地批量抖音视频解析与 Gemini 解读工具"
+description = "本地批量抖音视频解析与火山方舟 Responses 解读工具"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [

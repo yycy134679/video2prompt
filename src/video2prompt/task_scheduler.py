@@ -17,8 +17,8 @@ from .cache_store import CacheStore
 from .circuit_breaker import CircuitBreaker
 from .errors import (
     CircuitBreakerOpenError,
-    GeminiError,
-    GeminiRetryableError,
+    ModelError,
+    ModelRetryableError,
     ParserClientSideError,
     ParserError,
     ParserRetryableError,
@@ -243,7 +243,7 @@ class TaskScheduler:
     ) -> None:
         backoff_seq = self.config.retry.model_backoff_seconds
         max_attempts = min(len(backoff_seq) + 1, self.MAX_RETRIES_PER_SERVICE + 1)
-        api_mode = task.model_api_mode or "responses_video_url"
+        api_mode = task.model_api_mode or "video_url"
 
         for attempt in range(1, max_attempts + 1):
             if cancel_event.is_set():
@@ -268,7 +268,7 @@ class TaskScheduler:
                 await self._save_task_cache(task)
                 self.logger.info("模型解读成功 pid=%s", task.pid, extra=build_model_log_extra(task))
                 return
-            except GeminiRetryableError as exc:
+            except ModelRetryableError as exc:
                 message = str(exc)
                 is_burst = self._is_burst_limit_error(message)
                 is_fetch_error = (not is_burst) and self.model_client.is_video_fetch_error_message(message)
@@ -283,14 +283,14 @@ class TaskScheduler:
                     self.model_breaker.record_failure()
                     self.logger.warning("模型可重试错误: %s", exc)
 
-                if is_fetch_error and api_mode == "responses_video_url":
+                if is_fetch_error and api_mode == "video_url":
                     switched = await self._try_fallback_video_url_to_file_id(
                         task,
                         message=message,
                         cancel_event=cancel_event,
                     )
                     if switched:
-                        api_mode = "responses_file_id"
+                        api_mode = "file_id"
                         continue
                     self.logger.info("检测到视频资源拉取失败，尝试重新解析直链")
                     await self._reparse_video_url(task, cancel_event=cancel_event)
@@ -298,7 +298,7 @@ class TaskScheduler:
                 if (not is_burst) and self.model_breaker.is_tripped():
                     self._trip_circuit("模型服务熔断")
                 if attempt >= max_attempts:
-                    raise GeminiError(f"模型重试耗尽: {exc}") from exc
+                    raise ModelError(f"模型重试耗尽: {exc}") from exc
 
                 extra_delay = 0.0
                 if is_burst:
@@ -312,7 +312,7 @@ class TaskScheduler:
                     extra_delay_seconds=extra_delay,
                     cancel_event=cancel_event,
                 )
-            except GeminiError as exc:
+            except ModelError as exc:
                 message = str(exc)
                 is_fetch_error = self.model_client.is_video_fetch_error_message(message)
                 if is_fetch_error:
@@ -321,21 +321,21 @@ class TaskScheduler:
                     self.model_breaker.record_failure()
                     self.logger.error("模型不可重试错误: %s", exc)
 
-                if is_fetch_error and api_mode == "responses_video_url":
+                if is_fetch_error and api_mode == "video_url":
                     switched = await self._try_fallback_video_url_to_file_id(
                         task,
                         message=message,
                         cancel_event=cancel_event,
                     )
                     if switched:
-                        api_mode = "responses_file_id"
+                        api_mode = "file_id"
                         continue
                     try:
                         await self._reparse_video_url(task, cancel_event=cancel_event)
                     except Exception as reparse_exc:  # noqa: BLE001
-                        raise GeminiError(f"模型失败，且重解析失败: {reparse_exc}") from exc
+                        raise ModelError(f"模型失败，且重解析失败: {reparse_exc}") from exc
                     if attempt >= max_attempts:
-                        raise GeminiError(f"模型重试耗尽: {exc}") from exc
+                        raise ModelError(f"模型重试耗尽: {exc}") from exc
                     await self._backoff_wait("model", attempt, on_update=on_update, task=task, cancel_event=cancel_event)
                     continue
                 if self.model_breaker.is_tripped():
@@ -343,7 +343,7 @@ class TaskScheduler:
                 raise
 
     async def _invoke_model(self, task: Task, api_mode: str, cancel_event: asyncio.Event) -> tuple[str, float]:
-        if api_mode == "responses_file_id":
+        if api_mode == "file_id":
             return await self._invoke_responses_with_file(task, cancel_event=cancel_event)
 
         output, fps_used = await self._await_with_cancel(
@@ -359,7 +359,7 @@ class TaskScheduler:
 
     async def _invoke_responses_with_file(self, task: Task, cancel_event: asyncio.Event) -> tuple[str, float]:
         if self.volcengine_files_client is None or self.volcengine_responses_client is None:
-            raise GeminiError("responses_file_id 模式缺少 Files/Responses 客户端")
+            raise ModelError("file_id 模式缺少 Files/Responses 客户端")
 
         temp_path = ""
         file_id = ""
@@ -411,25 +411,25 @@ class TaskScheduler:
 
         if input_mode == "video_url":
             if size_mb is not None and size_mb > video_url_limit:
-                raise GeminiError(
+                raise ModelError(
                     f"视频文件过大（{size_mb:.1f} MiB > video_url 上限 {video_url_limit} MiB），请切换 input_mode=file_id/auto"
                 )
-            return "responses_video_url"
+            return "video_url"
 
         if input_mode == "file_id":
             if size_mb is not None and size_mb > files_limit:
-                raise GeminiError(
+                raise ModelError(
                     f"视频文件过大（{size_mb:.1f} MiB > Files 上限 {files_limit} MiB），已超过平台限制"
                 )
-            return "responses_file_id"
+            return "file_id"
 
         if size_mb is None:
-            return "responses_video_url"
+            return "video_url"
         if size_mb <= video_url_limit:
-            return "responses_video_url"
+            return "video_url"
         if size_mb <= files_limit:
-            return "responses_file_id"
-        raise GeminiError(f"视频文件过大（{size_mb:.1f} MiB > Files 上限 {files_limit} MiB），已超过平台限制")
+            return "file_id"
+        raise ModelError(f"视频文件过大（{size_mb:.1f} MiB > Files 上限 {files_limit} MiB），已超过平台限制")
 
     async def _probe_video_size_mb(self, url: str, cancel_event: asyncio.Event | None = None) -> float | None:
         if not url:
@@ -478,7 +478,7 @@ class TaskScheduler:
 
     def _inject_model_observation(self, task: Task, api_mode: str) -> None:
         source: Any = self.model_client
-        if api_mode == "responses_file_id":
+        if api_mode == "file_id":
             source = self.volcengine_responses_client
 
         consume = getattr(source, "consume_last_observation", None)
@@ -540,7 +540,7 @@ class TaskScheduler:
             )
             return False
 
-        task.model_api_mode = "responses_file_id"
+        task.model_api_mode = "file_id"
         self.logger.info("检测到 video_url 拉取失败，自动回退 file_id 重试")
         return True
 

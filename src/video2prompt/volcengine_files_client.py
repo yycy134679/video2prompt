@@ -10,7 +10,7 @@ from pathlib import Path
 
 import httpx
 
-from .errors import GeminiError, GeminiRetryableError
+from .errors import ModelError, ModelRetryableError
 
 
 class VolcengineFilesClient:
@@ -44,9 +44,9 @@ class VolcengineFilesClient:
         try:
             async with client.stream("GET", url, follow_redirects=True) as resp:
                 if resp.status_code in {429, 500, 502, 503, 504}:
-                    raise GeminiRetryableError(f"下载视频失败，状态码 {resp.status_code}: {resp.text[:300]}")
+                    raise ModelRetryableError(f"下载视频失败，状态码 {resp.status_code}: {resp.text[:300]}")
                 if resp.status_code >= 400:
-                    raise GeminiError(f"下载视频失败，状态码 {resp.status_code}: {resp.text[:300]}")
+                    raise ModelError(f"下载视频失败，状态码 {resp.status_code}: {resp.text[:300]}")
 
                 with Path(temp_path).open("wb") as f:
                     async for chunk in resp.aiter_bytes():
@@ -54,7 +54,7 @@ class VolcengineFilesClient:
                             continue
                         current_bytes += len(chunk)
                         if current_bytes > max_bytes:
-                            raise GeminiError(
+                            raise ModelError(
                                 f"视频文件超过 Files 上限（>{max_mb} MiB），已中断下载"
                             )
                         f.write(chunk)
@@ -91,21 +91,21 @@ class VolcengineFilesClient:
                     files={"file": (file_name, f, "video/mp4")},
                 )
             if resp.status_code in {429, 500, 502, 503, 504}:
-                raise GeminiRetryableError(f"上传文件失败，状态码 {resp.status_code}: {resp.text[:500]}")
+                raise ModelRetryableError(f"上传文件失败，状态码 {resp.status_code}: {resp.text[:500]}")
             if resp.status_code >= 400:
-                raise GeminiError(f"上传文件失败，状态码 {resp.status_code}: {resp.text[:500]}")
+                raise ModelError(f"上传文件失败，状态码 {resp.status_code}: {resp.text[:500]}")
 
             payload = resp.json()
             file_id = payload.get("id") if isinstance(payload, dict) else None
             if not isinstance(file_id, str) or not file_id.strip():
-                raise GeminiError(f"上传成功但未返回有效 file_id: {payload}")
+                raise ModelError(f"上传成功但未返回有效 file_id: {payload}")
             return file_id
         except ValueError as exc:
-            raise GeminiRetryableError(f"上传文件返回 JSON 解析失败: {exc}") from exc
+            raise ModelRetryableError(f"上传文件返回 JSON 解析失败: {exc}") from exc
         except httpx.TimeoutException as exc:
-            raise GeminiRetryableError(f"上传文件超时: {exc}") from exc
+            raise ModelRetryableError(f"上传文件超时: {exc}") from exc
         except httpx.HTTPError as exc:
-            raise GeminiRetryableError(f"上传文件请求异常: {exc}") from exc
+            raise ModelRetryableError(f"上传文件请求异常: {exc}") from exc
         finally:
             if close_client:
                 await client.aclose()
@@ -126,9 +126,9 @@ class VolcengineFilesClient:
             while True:
                 resp = await client.get(url, headers=headers)
                 if resp.status_code in {429, 500, 502, 503, 504}:
-                    raise GeminiRetryableError(f"查询文件状态失败，状态码 {resp.status_code}: {resp.text[:500]}")
+                    raise ModelRetryableError(f"查询文件状态失败，状态码 {resp.status_code}: {resp.text[:500]}")
                 if resp.status_code >= 400:
-                    raise GeminiError(f"查询文件状态失败，状态码 {resp.status_code}: {resp.text[:500]}")
+                    raise ModelError(f"查询文件状态失败，状态码 {resp.status_code}: {resp.text[:500]}")
 
                 payload = resp.json()
                 status = ""
@@ -138,17 +138,17 @@ class VolcengineFilesClient:
                 if status == "active":
                     return
                 if status == "failed":
-                    raise GeminiError(f"文件处理失败 file_id={file_id}: {payload}")
+                    raise ModelError(f"文件处理失败 file_id={file_id}: {payload}")
 
                 if time.monotonic() >= deadline:
-                    raise GeminiError(f"文件激活超时 file_id={file_id} timeout={timeout_seconds}s")
+                    raise ModelError(f"文件激活超时 file_id={file_id} timeout={timeout_seconds}s")
                 await asyncio_sleep(1.5)
         except ValueError as exc:
-            raise GeminiRetryableError(f"查询文件状态 JSON 解析失败: {exc}") from exc
+            raise ModelRetryableError(f"查询文件状态 JSON 解析失败: {exc}") from exc
         except httpx.TimeoutException as exc:
-            raise GeminiRetryableError(f"查询文件状态超时: {exc}") from exc
+            raise ModelRetryableError(f"查询文件状态超时: {exc}") from exc
         except httpx.HTTPError as exc:
-            raise GeminiRetryableError(f"查询文件状态请求异常: {exc}") from exc
+            raise ModelRetryableError(f"查询文件状态请求异常: {exc}") from exc
         finally:
             if close_client:
                 await client.aclose()

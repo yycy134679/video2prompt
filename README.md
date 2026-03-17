@@ -30,7 +30,7 @@
 - 批量输入 `pid + 链接`，自动解析无水印视频直链并执行后续流程
 - 内嵌 Douyin-only 解析，不再依赖额外 HTTP 解析服务
 - 支持手动粘贴并持久化抖音 Cookie，重启应用后仍可继续使用
-- 支持 `Gemini` 和 `火山方舟（Volcengine / Seed 2.0）` 两种模型服务商
+- 仅保留 `火山方舟（Volcengine / Seed）Responses API + Files API` 单一路径
 - 内置三种运行模式：`视频复刻提示词`、`按类目分析`、`视频时长判断`
 - 支持结构化“能否翻译”审查，覆盖儿童口播、多人口播、价格促销、字幕、贴纸/花字等维度
 - 本地 SQLite 缓存，避免相同链接 + Prompt 重复调用模型
@@ -45,7 +45,7 @@ flowchart LR
   A["批量输入<br/>pid / link / category"] --> B["手动配置 Cookie"]
   B --> C["内嵌抖音解析<br/>获取视频直链"]
   C --> D{"运行模式"}
-  D --> E["Gemini / 火山方舟<br/>视频解读"]
+  D --> E["火山方舟 Responses / Files<br/>视频解读"]
   D --> F["ffprobe<br/>时长探测"]
   E --> G["SQLite 缓存"]
   E --> H["Excel 导出"]
@@ -62,7 +62,7 @@ flowchart LR
 - Python `3.11+`
 - 可用的抖音网页 Cookie（首次启动后在页面内手动粘贴保存）
 - 如果要使用“视频时长判断”模式，需要 `ffprobe`
-- 如果要使用 AI 解读模式，需要 `GEMINI_API_KEY` 或 `VOLCENGINE_API_KEY` / `ARK_API_KEY`
+- 如果要使用 AI 解读模式，需要 `VOLCENGINE_API_KEY` 或 `ARK_API_KEY`
 
 > [!NOTE]
 > “视频时长判断”模式不会调用模型，因此不需要 AI API Key，但仍然需要已配置的抖音 Cookie。
@@ -83,47 +83,37 @@ python -m pip install -e ".[dev]"
 cp .env.example .env
 ```
 
-`.env` 中按需填写：
+`.env` 中填写：
 
 ```env
-GEMINI_API_KEY=your_api_key_here
 VOLCENGINE_API_KEY=your_volcengine_api_key_here
 ARK_API_KEY=your_ark_api_key_here
 ```
 
 ### 4. 检查 `config.yaml`
 
-项目默认通过 `config.yaml` 控制模型服务商、并发、重试、熔断、缓存和日志路径。
+项目默认通过 `config.yaml` 控制火山模型参数、并发、重试、熔断、缓存和日志路径。
 
-Gemini 示例：
-
-```yaml
-provider: "gemini"
-
-gemini:
-  base_url: "https://qfgapi.com"
-  model: "gemini-3-flash-preview"
-  thinking_level: "high"
-  media_resolution: "media_resolution_medium"
-  video_fps: 2.0
-```
-
-火山方舟示例：
+推荐配置示例：
 
 ```yaml
-provider: "volcengine"
-
 volcengine:
   base_url: "https://ark.cn-beijing.volces.com/api/v3"
   endpoint_id: "ep-xxxxxxxx"
-  target_model: "seed-2.0-lite"
+  timeout_seconds: 300
+  video_fps: 2.0
   thinking_type: "enabled"
   reasoning_effort: "high"
+  max_output_tokens: null
   input_mode: "auto"
+  video_url_size_limit_mb: 50
+  files_video_size_limit_mb: 512
+  files_poll_timeout_seconds: 180
+  stream: true
 ```
 
 > [!IMPORTANT]
-> 当 `provider=volcengine` 时，`volcengine.endpoint_id` 必填，且 `volcengine.target_model` 必须以 `seed-2.0` 开头。
+> `volcengine.endpoint_id` 必填。`input_mode=auto` 时，小于等于 `50MB` 的公网视频优先走 `video_url`，更大或直链访问失败时自动回退 `Files API + file_id`。
 
 ### 5. 启动应用
 
@@ -173,13 +163,12 @@ python -m streamlit run app.py --server.headless=false
 页面支持调整部分高频参数，且**只对本次运行生效**，不会写回 `config.yaml`，例如：
 
 - `parser.concurrency`
-- `gemini.video_fps`
 - `volcengine.video_fps`
 - `volcengine.thinking_type`
 - `volcengine.reasoning_effort`
 - 输出格式
 
-高级参数如退避、熔断、批量 Chat、完成后等待时间，仍建议直接修改 `config.yaml`。
+高级参数如退避、熔断、文件轮询超时、完成后等待时间，仍建议直接修改 `config.yaml`。
 
 ## 配置说明
 
@@ -187,7 +176,6 @@ python -m streamlit run app.py --server.headless=false
 
 | 变量名 | 用途 |
 | --- | --- |
-| `GEMINI_API_KEY` | Gemini 模式使用 |
 | `VOLCENGINE_API_KEY` | 火山方舟模式使用 |
 | `ARK_API_KEY` | 火山方舟 API Key 兼容变量 |
 
@@ -195,7 +183,9 @@ python -m streamlit run app.py --server.headless=false
 
 | 配置项 | 说明 |
 | --- | --- |
-| `provider` | 当前模型服务商，支持 `gemini` / `volcengine` |
+| `volcengine.endpoint_id` | 火山方舟推理接入点 ID |
+| `volcengine.input_mode` | 输入模式，支持 `auto` / `video_url` / `file_id` |
+| `volcengine.stream` | 是否启用流式 Responses 聚合 |
 | `parser.base_url` | 兼容保留字段，当前版本读取但忽略 |
 | `parser.concurrency` | 解析并发，范围 `1-50` |
 | `retry.*` | 解析 / 模型退避序列与退避上限 |
@@ -226,8 +216,8 @@ video2prompt/
 │   ├── task_scheduler.py
 │   ├── duration_check_runner.py
 │   ├── parser_client.py
-│   ├── gemini_client.py
-│   ├── volcengine_client.py
+│   ├── volcengine_responses_client.py
+│   ├── volcengine_files_client.py
 │   ├── cache_store.py
 │   ├── review_result.py
 │   ├── excel_exporter.py

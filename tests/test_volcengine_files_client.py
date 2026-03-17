@@ -6,7 +6,7 @@ from pathlib import Path
 import httpx
 import pytest
 
-from video2prompt.errors import GeminiError
+from video2prompt.errors import ModelError
 from video2prompt.volcengine_files_client import VolcengineFilesClient
 
 
@@ -26,7 +26,7 @@ def test_download_video_to_temp_over_limit(tmp_path: Path) -> None:
             )
             await client.download_video_to_temp("https://example.com/video.mp4", max_mb=1)
 
-    with pytest.raises(GeminiError):
+    with pytest.raises(ModelError):
         asyncio.run(_run())
 
 
@@ -49,7 +49,7 @@ def test_upload_file_success(tmp_path: Path) -> None:
                 api_key="k",
                 http_client=http_client,
             )
-            return await client.upload_file(str(sample), fps=1.0, model="ep-test", expire_days=7)
+            return await client.upload_file(str(sample), fps=1.0, expire_days=7)
 
     file_id = asyncio.run(_run())
     assert file_id == "file-123"
@@ -75,7 +75,7 @@ def test_poll_file_ready_timeout() -> None:
             )
             await client.poll_file_ready("file-123", timeout_seconds=1)
 
-    with pytest.raises(GeminiError):
+    with pytest.raises(ModelError):
         asyncio.run(_run())
 
 
