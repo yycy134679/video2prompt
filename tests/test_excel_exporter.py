@@ -25,7 +25,7 @@ def test_export_auto_add_douyin_link_column(tmp_path: Path) -> None:
             original_link="https://www.douyin.com/video/1",
             state=TaskState.COMPLETED,
             can_translate="能",
-            gemini_output="提示词A",
+            model_output="提示词A",
         )
     ]
     exporter.export(tasks=tasks, output_path=str(output_path))
@@ -59,7 +59,7 @@ def test_export_use_existing_douyin_link_column(tmp_path: Path) -> None:
             original_link="https://www.douyin.com/video/2",
             state=TaskState.COMPLETED,
             can_translate="不能",
-            gemini_output="提示词B",
+            model_output="提示词B",
         )
     ]
     exporter.export(tasks=tasks, output_path=str(output_path))
@@ -92,7 +92,7 @@ def test_export_add_category_column_when_enabled(tmp_path: Path) -> None:
             category="服饰",
             state=TaskState.COMPLETED,
             can_translate="能",
-            gemini_output="提示词C",
+            model_output="提示词C",
         )
     ]
     exporter.export(tasks=tasks, output_path=str(output_path), include_category=True)

@@ -26,11 +26,11 @@ class _StubCache:
         prompt_hash: str,
         aweme_id: str,
         video_url: str,
-        gemini_output: str,
+        model_output: str,
         can_translate: str,
         fps_used: float,
     ) -> None:
-        del link_hash, prompt_hash, aweme_id, video_url, gemini_output, can_translate, fps_used
+        del link_hash, prompt_hash, aweme_id, video_url, model_output, can_translate, fps_used
         return None
 
 
@@ -152,14 +152,14 @@ class _BlockingModel:
 
 def _make_scheduler(parser, config: AppConfig) -> TaskScheduler:  # noqa: ANN001
     parser_breaker = CircuitBreaker(consecutive_threshold=20, rate_threshold=1.0, window_seconds=60)
-    gemini_breaker = CircuitBreaker(consecutive_threshold=20, rate_threshold=1.0, window_seconds=60)
+    model_breaker = CircuitBreaker(consecutive_threshold=20, rate_threshold=1.0, window_seconds=60)
     return TaskScheduler(
         parser=parser,
         model_client=_StubModel(),
         cache=_StubCache(),
         config=config,
         parser_breaker=parser_breaker,
-        gemini_breaker=gemini_breaker,
+        model_breaker=model_breaker,
     )
 
 
@@ -178,9 +178,9 @@ def _base_config(
         ),
         retry=RetryConfig(
             parser_backoff_seconds=parser_backoff,
-            gemini_backoff_seconds=[1],
+            model_backoff_seconds=[1],
             parser_backoff_cap_seconds=30,
-            gemini_backoff_cap_seconds=30,
+            model_backoff_cap_seconds=30,
             pause_global_queue_during_backoff=True,
         ),
         task=TaskConfig(completion_delay_min_seconds=0.0, completion_delay_max_seconds=0.0),
@@ -308,14 +308,14 @@ def test_cancel_event_stops_waiting_parsing_and_interpreting_tasks() -> None:
     model = _BlockingModel()
     config = _base_config(concurrency=2, cooldown_seconds=0.0, parser_backoff=[1])
     parser_breaker = CircuitBreaker(consecutive_threshold=20, rate_threshold=1.0, window_seconds=60)
-    gemini_breaker = CircuitBreaker(consecutive_threshold=20, rate_threshold=1.0, window_seconds=60)
+    model_breaker = CircuitBreaker(consecutive_threshold=20, rate_threshold=1.0, window_seconds=60)
     scheduler = TaskScheduler(
         parser=parser,
         model_client=model,
         cache=_StubCache(),
         config=config,
         parser_breaker=parser_breaker,
-        gemini_breaker=gemini_breaker,
+        model_breaker=model_breaker,
     )
     task_interpreting = Task(pid="1", original_link="a")
     task_parsing = Task(pid="2", original_link="b")

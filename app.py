@@ -85,12 +85,12 @@ def _task_to_row(task: Task) -> dict[str, Any]:
         "aweme_id": task.aweme_id,
         "状态": task.state.value,
         "解析重试": task.parse_retries,
-        "模型重试": task.gemini_retries,
+        "模型重试": task.model_retries,
         "耗时(s)": round(task.duration_seconds, 2),
         "能否翻译": task.can_translate,
         "FPS": task.fps_used,
         "错误": task.error_message,
-        "信息摘要预览": task.gemini_output[:120],
+        "信息摘要预览": task.model_output[:120],
         "缓存命中": task.cache_hit,
         "prompt_tokens": task.model_prompt_tokens,
         "completion_tokens": task.model_completion_tokens,
@@ -186,9 +186,9 @@ async def _run_scheduler(
         rate_threshold=config.circuit_breaker.parser.failure_rate,
         window_seconds=config.circuit_breaker.window_seconds,
     )
-    gemini_breaker = CircuitBreaker(
-        consecutive_threshold=config.circuit_breaker.gemini.consecutive_failures,
-        rate_threshold=config.circuit_breaker.gemini.failure_rate,
+    model_breaker = CircuitBreaker(
+        consecutive_threshold=config.circuit_breaker.model.consecutive_failures,
+        rate_threshold=config.circuit_breaker.model.failure_rate,
         window_seconds=config.circuit_breaker.window_seconds,
     )
 
@@ -198,7 +198,7 @@ async def _run_scheduler(
         cache=cache,
         config=config,
         parser_breaker=parser_breaker,
-        gemini_breaker=gemini_breaker,
+        model_breaker=model_breaker,
         logger=logger,
         volcengine_files_client=volc_files_client,
         volcengine_responses_client=volc_responses_client,

@@ -38,9 +38,9 @@ def _make_config(*, parser_backoff: list[int]) -> AppConfig:
         ),
         retry=RetryConfig(
             parser_backoff_seconds=parser_backoff,
-            gemini_backoff_seconds=[1],
+            model_backoff_seconds=[1],
             parser_backoff_cap_seconds=30,
-            gemini_backoff_cap_seconds=30,
+            model_backoff_cap_seconds=30,
             pause_global_queue_during_backoff=True,
         ),
         task=TaskConfig(

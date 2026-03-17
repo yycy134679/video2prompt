@@ -45,11 +45,11 @@ retry:
   # Parser 重试等待序列（秒）
   parser_backoff_seconds: [10, 30]
   # 模型重试等待序列（秒）
-  gemini_backoff_seconds: [5, 15]
+  model_backoff_seconds: [5, 15]
   # Parser 最大退避上限（秒）
   parser_backoff_cap_seconds: 30
   # 模型最大退避上限（秒）
-  gemini_backoff_cap_seconds: 30
+  model_backoff_cap_seconds: 30
   # 兼容保留字段（当前版本调度器不再使用）
   pause_global_queue_during_backoff: true
 
@@ -64,7 +64,7 @@ circuit_breaker:
     # 窗口失败率阈值（0-1）
     failure_rate: 0.6
   # 模型熔断阈值
-  gemini:
+  model:
     # 连续失败次数阈值
     consecutive_failures: 4
     # 窗口失败率阈值（0-1）

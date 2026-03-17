@@ -36,11 +36,11 @@ class _StubCache:
         prompt_hash: str,
         aweme_id: str,
         video_url: str,
-        gemini_output: str,
+        model_output: str,
         can_translate: str,
         fps_used: float,
     ) -> None:
-        del link_hash, prompt_hash, aweme_id, video_url, gemini_output, can_translate, fps_used
+        del link_hash, prompt_hash, aweme_id, video_url, model_output, can_translate, fps_used
         return None
 
 
@@ -126,14 +126,14 @@ def _make_scheduler(
     responses_client=None,
 ) -> TaskScheduler:
     parser_breaker = CircuitBreaker(consecutive_threshold=5, rate_threshold=1.0, window_seconds=60)
-    gemini_breaker = CircuitBreaker(consecutive_threshold=5, rate_threshold=1.0, window_seconds=60)
+    model_breaker = CircuitBreaker(consecutive_threshold=5, rate_threshold=1.0, window_seconds=60)
     return TaskScheduler(
         parser=_StubParser(),
         model_client=model_client,
         cache=_StubCache(),
         config=config,
         parser_breaker=parser_breaker,
-        gemini_breaker=gemini_breaker,
+        model_breaker=model_breaker,
         volcengine_files_client=files_client,
         volcengine_responses_client=responses_client,
     )
@@ -151,9 +151,9 @@ def _make_volc_config(**kwargs) -> AppConfig:  # noqa: ANN003
         parser=ParserConfig(concurrency=1, pre_delay_min_seconds=0.0, pre_delay_max_seconds=0.0, timeout_seconds=30),
         retry=RetryConfig(
             parser_backoff_seconds=[1],
-            gemini_backoff_seconds=[1],
+            model_backoff_seconds=[1],
             parser_backoff_cap_seconds=5,
-            gemini_backoff_cap_seconds=5,
+            model_backoff_cap_seconds=5,
             pause_global_queue_during_backoff=False,
         ),
     )
@@ -186,7 +186,7 @@ def test_request_burst_too_fast_uses_penalty_backoff() -> None:
     asyncio.run(_run())
     assert task.state.value == "完成"
     assert calls and calls[0] > 0
-    assert scheduler.gemini_breaker.is_tripped() is False
+    assert scheduler.model_breaker.is_tripped() is False
 
 
 def test_server_overloaded_uses_normal_backoff() -> None:
@@ -237,7 +237,7 @@ def test_large_video_switches_to_responses_file() -> None:
     asyncio.run(_run())
     assert task.state.value == "完成"
     assert task.model_api_mode == "responses_file_id"
-    assert task.gemini_output == "responses-ok"
+    assert task.model_output == "responses-ok"
     assert model.calls == 0
 
 
@@ -264,7 +264,7 @@ def test_video_url_fetch_timeout_auto_fallback_to_file_id() -> None:
     asyncio.run(_run())
     assert task.state.value == "完成"
     assert task.model_api_mode == "responses_file_id"
-    assert task.gemini_output == "responses-ok"
+    assert task.model_output == "responses-ok"
     assert model.calls == 1
 
 

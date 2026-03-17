@@ -30,14 +30,14 @@ class _MemoryCache:
         prompt_hash: str,
         aweme_id: str,
         video_url: str,
-        gemini_output: str,
+        model_output: str,
         can_translate: str,
         fps_used: float,
     ) -> None:
         self.rows[(link_hash, prompt_hash)] = SimpleNamespace(
             aweme_id=aweme_id,
             video_url=video_url,
-            gemini_output=gemini_output,
+            model_output=model_output,
             can_translate=can_translate,
             fps_used=fps_used,
         )
@@ -82,14 +82,14 @@ class _QueueModel:
 
 def _make_scheduler(model_client: _QueueModel, cache: _MemoryCache) -> TaskScheduler:
     parser_breaker = CircuitBreaker(consecutive_threshold=5, rate_threshold=1.0, window_seconds=60)
-    gemini_breaker = CircuitBreaker(consecutive_threshold=5, rate_threshold=1.0, window_seconds=60)
+    model_breaker = CircuitBreaker(consecutive_threshold=5, rate_threshold=1.0, window_seconds=60)
     config = AppConfig(
         parser=ParserConfig(concurrency=1, pre_delay_min_seconds=0.0, pre_delay_max_seconds=0.0, timeout_seconds=30),
         retry=RetryConfig(
             parser_backoff_seconds=[1],
-            gemini_backoff_seconds=[1],
+            model_backoff_seconds=[1],
             parser_backoff_cap_seconds=5,
-            gemini_backoff_cap_seconds=5,
+            model_backoff_cap_seconds=5,
             pause_global_queue_during_backoff=False,
         ),
         task=TaskConfig(completion_delay_min_seconds=0.0, completion_delay_max_seconds=0.0),
@@ -100,7 +100,7 @@ def _make_scheduler(model_client: _QueueModel, cache: _MemoryCache) -> TaskSched
         cache=cache,
         config=config,
         parser_breaker=parser_breaker,
-        gemini_breaker=gemini_breaker,
+        model_breaker=model_breaker,
     )
 
 
@@ -125,7 +125,7 @@ def test_json_output_keeps_current_parsing_behavior() -> None:
 
     assert task.state.value == "完成"
     assert task.can_translate == "不能"
-    assert "3. 明确价格/促销信息：有" in task.gemini_output
+    assert "3. 明确价格/促销信息：有" in task.model_output
 
 
 def test_plain_text_mode_skips_structured_parse_even_on_cache_hit() -> None:
@@ -154,10 +154,10 @@ def test_plain_text_mode_skips_structured_parse_even_on_cache_hit() -> None:
 
     assert model.calls == 1
     assert first.can_translate == ""
-    assert first.gemini_output == raw
+    assert first.model_output == raw
     assert second.cache_hit is True
     assert second.can_translate == ""
-    assert second.gemini_output == raw
+    assert second.model_output == raw
 
 
 def test_cache_key_includes_output_format() -> None:

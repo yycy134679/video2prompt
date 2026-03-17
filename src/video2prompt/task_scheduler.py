@@ -50,7 +50,7 @@ class TaskScheduler:
         cache: CacheStore,
         config: AppConfig,
         parser_breaker: CircuitBreaker,
-        gemini_breaker: CircuitBreaker,
+        model_breaker: CircuitBreaker,
         logger: logging.Logger | None = None,
         volcengine_files_client: VolcengineFilesClient | None = None,
         volcengine_responses_client: VolcengineResponsesClient | None = None,
@@ -60,7 +60,7 @@ class TaskScheduler:
         self.cache = cache
         self.config = config
         self.parser_breaker = parser_breaker
-        self.gemini_breaker = gemini_breaker
+        self.model_breaker = model_breaker
         self.logger = logger or logging.getLogger("video2prompt")
         self.volcengine_files_client = volcengine_files_client
         self.volcengine_responses_client = volcengine_responses_client
@@ -175,12 +175,12 @@ class TaskScheduler:
         task.aweme_id = cached.aweme_id
         task.video_url = cached.video_url
         if self._output_format == self.OUTPUT_FORMAT_JSON:
-            cached_can_translate, cached_summary = split_review_columns(cached.gemini_output)
-            task.can_translate = cached.can_translate or cached_can_translate or extract_can_translate(cached.gemini_output)
-            task.gemini_output = cached_summary or cached.gemini_output
+            cached_can_translate, cached_summary = split_review_columns(cached.model_output)
+            task.can_translate = cached.can_translate or cached_can_translate or extract_can_translate(cached.model_output)
+            task.model_output = cached_summary or cached.model_output
         else:
             task.can_translate = cached.can_translate or ""
-            task.gemini_output = cached.gemini_output
+            task.model_output = cached.model_output
         task.fps_used = cached.fps_used
         task.state = TaskState.COMPLETED
         self._emit(task, on_update)
@@ -241,7 +241,7 @@ class TaskScheduler:
         on_update: TaskCallback | None,
         cancel_event: asyncio.Event,
     ) -> None:
-        backoff_seq = self.config.retry.gemini_backoff_seconds
+        backoff_seq = self.config.retry.model_backoff_seconds
         max_attempts = min(len(backoff_seq) + 1, self.MAX_RETRIES_PER_SERVICE + 1)
         api_mode = task.model_api_mode or "responses_video_url"
 
@@ -253,15 +253,15 @@ class TaskScheduler:
 
             self._check_circuit()
             task.state = TaskState.INTERPRETING
-            task.gemini_retries = attempt - 1
+            task.model_retries = attempt - 1
             self._emit(task, on_update)
 
             try:
                 output, fps_used = await self._invoke_model(task, api_mode, cancel_event)
-                self.gemini_breaker.record_success()
+                self.model_breaker.record_success()
                 self._burst_penalty_factor = max(1.0, self._burst_penalty_factor * 0.8)
 
-                task.can_translate, task.gemini_output = self._parse_output_by_format(output)
+                task.can_translate, task.model_output = self._parse_output_by_format(output)
                 task.fps_used = fps_used
                 self._inject_model_observation(task, api_mode)
 
@@ -280,7 +280,7 @@ class TaskScheduler:
                 elif is_fetch_error:
                     self.logger.warning("模型可重试错误（视频直链访问失败，不计入熔断）: %s", exc)
                 else:
-                    self.gemini_breaker.record_failure()
+                    self.model_breaker.record_failure()
                     self.logger.warning("模型可重试错误: %s", exc)
 
                 if is_fetch_error and api_mode == "responses_video_url":
@@ -295,17 +295,17 @@ class TaskScheduler:
                     self.logger.info("检测到视频资源拉取失败，尝试重新解析直链")
                     await self._reparse_video_url(task, cancel_event=cancel_event)
 
-                if (not is_burst) and self.gemini_breaker.is_tripped():
+                if (not is_burst) and self.model_breaker.is_tripped():
                     self._trip_circuit("模型服务熔断")
                 if attempt >= max_attempts:
                     raise GeminiError(f"模型重试耗尽: {exc}") from exc
 
                 extra_delay = 0.0
                 if is_burst:
-                    base = self._base_backoff_delay("gemini", attempt)
+                    base = self._base_backoff_delay("model", attempt)
                     extra_delay = max(0.0, base * (self._burst_penalty_factor - 1.0))
                 await self._backoff_wait(
-                    "gemini",
+                    "model",
                     attempt,
                     on_update=on_update,
                     task=task,
@@ -318,7 +318,7 @@ class TaskScheduler:
                 if is_fetch_error:
                     self.logger.error("模型不可重试错误（视频直链访问失败，不计入熔断）: %s", exc)
                 else:
-                    self.gemini_breaker.record_failure()
+                    self.model_breaker.record_failure()
                     self.logger.error("模型不可重试错误: %s", exc)
 
                 if is_fetch_error and api_mode == "responses_video_url":
@@ -336,9 +336,9 @@ class TaskScheduler:
                         raise GeminiError(f"模型失败，且重解析失败: {reparse_exc}") from exc
                     if attempt >= max_attempts:
                         raise GeminiError(f"模型重试耗尽: {exc}") from exc
-                    await self._backoff_wait("gemini", attempt, on_update=on_update, task=task, cancel_event=cancel_event)
+                    await self._backoff_wait("model", attempt, on_update=on_update, task=task, cancel_event=cancel_event)
                     continue
-                if self.gemini_breaker.is_tripped():
+                if self.model_breaker.is_tripped():
                     self._trip_circuit("模型服务熔断")
                 raise
 
@@ -507,7 +507,7 @@ class TaskScheduler:
             prompt_hash=prompt_hash,
             aweme_id=task.aweme_id,
             video_url=task.video_url,
-            gemini_output=task.gemini_output,
+            model_output=task.model_output,
             can_translate=task.can_translate,
             fps_used=task.fps_used,
         )
@@ -584,7 +584,7 @@ class TaskScheduler:
         if service == "parser":
             cap = int(self.config.retry.parser_backoff_cap_seconds)
         else:
-            cap = int(self.config.retry.gemini_backoff_cap_seconds)
+            cap = int(self.config.retry.model_backoff_cap_seconds)
 
         hard_cap = min(float(cap), self.BACKOFF_HARD_CAP_SECONDS)
         delay = min(base_delay + max(0.0, float(extra_delay_seconds)), hard_cap)
@@ -605,8 +605,8 @@ class TaskScheduler:
             seq = self.config.retry.parser_backoff_seconds
             cap = self.config.retry.parser_backoff_cap_seconds
         else:
-            seq = self.config.retry.gemini_backoff_seconds
-            cap = self.config.retry.gemini_backoff_cap_seconds
+            seq = self.config.retry.model_backoff_seconds
+            cap = self.config.retry.model_backoff_cap_seconds
 
         idx = max(0, min(attempt - 1, len(seq) - 1))
         return float(min(int(seq[idx]), int(cap), int(self.BACKOFF_HARD_CAP_SECONDS)))
@@ -702,7 +702,7 @@ class TaskScheduler:
         self._circuit_reason = None
         self._burst_penalty_factor = 1.0
         self.parser_breaker.reset()
-        self.gemini_breaker.reset()
+        self.model_breaker.reset()
 
     @classmethod
     def _normalize_output_format(cls, output_format: str) -> str:

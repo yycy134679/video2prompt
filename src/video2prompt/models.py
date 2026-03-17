@@ -58,9 +58,9 @@ class ParserConfig:
 @dataclass
 class RetryConfig:
     parser_backoff_seconds: list[int] = field(default_factory=lambda: [10, 30])
-    gemini_backoff_seconds: list[int] = field(default_factory=lambda: [5, 15])
+    model_backoff_seconds: list[int] = field(default_factory=lambda: [5, 15])
     parser_backoff_cap_seconds: int = 30
-    gemini_backoff_cap_seconds: int = 30
+    model_backoff_cap_seconds: int = 30
     pause_global_queue_during_backoff: bool = True
 
 
@@ -76,7 +76,7 @@ class CircuitBreakerConfig:
     parser: CircuitServiceConfig = field(
         default_factory=lambda: CircuitServiceConfig(consecutive_failures=8, failure_rate=0.6)
     )
-    gemini: CircuitServiceConfig = field(
+    model: CircuitServiceConfig = field(
         default_factory=lambda: CircuitServiceConfig(consecutive_failures=5, failure_rate=0.5)
     )
 
@@ -146,7 +146,7 @@ class CachedResult:
     prompt_hash: str
     aweme_id: str
     video_url: str
-    gemini_output: str
+    model_output: str
     can_translate: str
     fps_used: float
     created_at: datetime
@@ -161,10 +161,10 @@ class Task:
     video_url: str = ""
     state: TaskState = TaskState.WAITING
     parse_retries: int = 0
-    gemini_retries: int = 0
+    model_retries: int = 0
     error_message: str = ""
     can_translate: str = ""
-    gemini_output: str = ""
+    model_output: str = ""
     start_time: datetime | None = None
     end_time: datetime | None = None
     cache_hit: bool = False

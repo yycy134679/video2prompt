@@ -59,11 +59,11 @@ class ExcelExporter:
         for task in tasks:
             if task.state not in {TaskState.COMPLETED, TaskState.FAILED, TaskState.CANCELLED} and not task.cache_hit:
                 continue
-            if not task.gemini_output:
+            if not task.model_output:
                 continue
             ws.cell(row=row, column=pid_col).value = task.pid
             ws.cell(row=row, column=can_translate_col).value = task.can_translate
-            ws.cell(row=row, column=prompt_col).value = task.gemini_output
+            ws.cell(row=row, column=prompt_col).value = task.model_output
             ws.cell(row=row, column=link_col).value = task.original_link
             if category_col is not None:
                 ws.cell(row=row, column=category_col).value = task.category

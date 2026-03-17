@@ -20,7 +20,6 @@ class SecretMaskFilter(logging.Filter):
         self._tokens = [
             token
             for token in [
-                os.getenv("GEMINI_API_KEY", ""),
                 os.getenv("VOLCENGINE_API_KEY", ""),
                 os.getenv("ARK_API_KEY", ""),
             ]
@@ -29,7 +28,6 @@ class SecretMaskFilter(logging.Filter):
         self._patterns = [
             re.compile(r"(Authorization\s*:\s*Bearer\s+)([^\s]+)", re.IGNORECASE),
             re.compile(r"(\"Authorization\"\s*:\s*\"Bearer\s+)([^\"]+)(\")", re.IGNORECASE),
-            re.compile(r"(GEMINI_API_KEY\s*=\s*)([^\s]+)", re.IGNORECASE),
             re.compile(r"(VOLCENGINE_API_KEY\s*=\s*)([^\s]+)", re.IGNORECASE),
             re.compile(r"(ARK_API_KEY\s*=\s*)([^\s]+)", re.IGNORECASE),
         ]

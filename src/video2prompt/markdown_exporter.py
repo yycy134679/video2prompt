@@ -46,7 +46,7 @@ class MarkdownExporter:
         for idx, task in enumerate(tasks, start=1):
             chunks.append(f"## 视频 {idx}")
             chunks.append("")
-            chunks.append(task.gemini_output)
+            chunks.append(task.model_output)
             chunks.append("")
             chunks.append("---")
             chunks.append("")
@@ -58,7 +58,7 @@ class MarkdownExporter:
 
     def export_by_category(self, tasks: list[Task]) -> MarkdownExportResult:
         completed_tasks = [
-            task for task in tasks if task.state == TaskState.COMPLETED and bool(task.gemini_output)
+            task for task in tasks if task.state == TaskState.COMPLETED and bool(task.model_output)
         ]
         if not completed_tasks:
             raise ValueError("没有可导出的已完成任务（仅导出状态为“完成”且有模型输出的任务）")

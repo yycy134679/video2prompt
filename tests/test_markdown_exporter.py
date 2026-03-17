@@ -16,35 +16,35 @@ def test_export_by_category_generate_markdown_and_zip(tmp_path: Path) -> None:
             original_link="https://www.douyin.com/video/1",
             category="服饰",
             state=TaskState.COMPLETED,
-            gemini_output="脚本A",
+            model_output="脚本A",
         ),
         Task(
             pid="p-002",
             original_link="https://www.douyin.com/video/2",
             category="服饰",
             state=TaskState.COMPLETED,
-            gemini_output="脚本B",
+            model_output="脚本B",
         ),
         Task(
             pid="p-003",
             original_link="https://www.douyin.com/video/3",
             category="",
             state=TaskState.COMPLETED,
-            gemini_output="脚本C\n第二行",
+            model_output="脚本C\n第二行",
         ),
         Task(
             pid="p-004",
             original_link="https://www.douyin.com/video/4",
             category="3C/数码",
             state=TaskState.COMPLETED,
-            gemini_output="脚本D",
+            model_output="脚本D",
         ),
         Task(
             pid="p-005",
             original_link="https://www.douyin.com/video/5",
             category="美妆",
             state=TaskState.FAILED,
-            gemini_output="脚本E",
+            model_output="脚本E",
         ),
     ]
 
@@ -83,7 +83,7 @@ def test_export_by_category_raise_when_no_completed_task(tmp_path: Path) -> None
             original_link="https://www.douyin.com/video/1",
             category="服饰",
             state=TaskState.FAILED,
-            gemini_output="脚本A",
+            model_output="脚本A",
         )
     ]
     exporter = MarkdownExporter(output_root=str(tmp_path))

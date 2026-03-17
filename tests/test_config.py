@@ -128,7 +128,7 @@ volcengine:
   endpoint_id: "ep-test"
 retry:
   parser_backoff_cap_seconds: 31
-  gemini_backoff_cap_seconds: 30
+  model_backoff_cap_seconds: 30
         """.strip(),
     )
 

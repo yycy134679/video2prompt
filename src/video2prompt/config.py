@@ -120,7 +120,7 @@ class ConfigManager:
         cb = CircuitBreakerConfig(
             window_seconds=int(cb_data.get("window_seconds", 300)),
             parser=CircuitServiceConfig(**self._as_dict(cb_data, "parser")),
-            gemini=CircuitServiceConfig(**self._as_dict(cb_data, "gemini")),
+            model=CircuitServiceConfig(**self._as_dict(cb_data, "model")),
         )
 
         task = TaskConfig(**self._as_dict(merged, "task"))
@@ -187,25 +187,25 @@ class ConfigManager:
         if not isinstance(config.volcengine.stream, bool):
             raise ConfigError("volcengine.stream 必须是布尔值")
 
-        if not config.retry.parser_backoff_seconds or not config.retry.gemini_backoff_seconds:
+        if not config.retry.parser_backoff_seconds or not config.retry.model_backoff_seconds:
             raise ConfigError("retry backoff 列表不能为空")
         if any(int(x) <= 0 for x in config.retry.parser_backoff_seconds):
             raise ConfigError("retry.parser_backoff_seconds 必须为正整数")
-        if any(int(x) <= 0 for x in config.retry.gemini_backoff_seconds):
-            raise ConfigError("retry.gemini_backoff_seconds 必须为正整数")
-        if config.retry.parser_backoff_cap_seconds <= 0 or config.retry.gemini_backoff_cap_seconds <= 0:
+        if any(int(x) <= 0 for x in config.retry.model_backoff_seconds):
+            raise ConfigError("retry.model_backoff_seconds 必须为正整数")
+        if config.retry.parser_backoff_cap_seconds <= 0 or config.retry.model_backoff_cap_seconds <= 0:
             raise ConfigError("retry backoff cap 必须 > 0")
-        if config.retry.parser_backoff_cap_seconds > 30 or config.retry.gemini_backoff_cap_seconds > 30:
+        if config.retry.parser_backoff_cap_seconds > 30 or config.retry.model_backoff_cap_seconds > 30:
             raise ConfigError("retry backoff cap 必须 <= 30")
 
         if not (0 <= config.circuit_breaker.parser.failure_rate <= 1):
             raise ConfigError("circuit_breaker.parser.failure_rate 必须在 [0,1]")
-        if not (0 <= config.circuit_breaker.gemini.failure_rate <= 1):
-            raise ConfigError("circuit_breaker.gemini.failure_rate 必须在 [0,1]")
+        if not (0 <= config.circuit_breaker.model.failure_rate <= 1):
+            raise ConfigError("circuit_breaker.model.failure_rate 必须在 [0,1]")
         if config.circuit_breaker.parser.consecutive_failures <= 0:
             raise ConfigError("circuit_breaker.parser.consecutive_failures 必须 > 0")
-        if config.circuit_breaker.gemini.consecutive_failures <= 0:
-            raise ConfigError("circuit_breaker.gemini.consecutive_failures 必须 > 0")
+        if config.circuit_breaker.model.consecutive_failures <= 0:
+            raise ConfigError("circuit_breaker.model.consecutive_failures 必须 > 0")
 
         if config.task.completion_delay_min_seconds < 0 or config.task.completion_delay_max_seconds < 0:
             raise ConfigError("task.completion_delay_* 必须 >= 0")
