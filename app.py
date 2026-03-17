@@ -8,7 +8,7 @@ import hashlib
 import threading
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, MutableMapping
 
 import httpx
 import streamlit as st
@@ -48,6 +48,7 @@ SESSION_DURATION_LONG_FAILED_DOWNLOAD = "duration_long_failed_download_payload"
 SESSION_RUN_CONTROLLER = "run_controller"
 SESSION_COOKIE_NOTICE = "cookie_notice"
 SESSION_COOKIE_FAILURE = "cookie_failure"
+SESSION_COOKIE_INPUT_RESET = "cookie_input_reset"
 
 
 @dataclass
@@ -491,8 +492,14 @@ def _resolve_cookie_failure_state(previous_failed: bool, notice: str, tasks: lis
     return previous_failed
 
 
+def _consume_cookie_input_reset(session_state: MutableMapping[str, Any]) -> None:
+    if bool(session_state.pop(SESSION_COOKIE_INPUT_RESET, False)):
+        session_state["douyin_cookie_input"] = ""
+
+
 def _render_cookie_panel(user_state_store: UserStateStore, tasks: list[Task]) -> None:
     notice = str(st.session_state.pop(SESSION_COOKIE_NOTICE, "") or "")
+    _consume_cookie_input_reset(st.session_state)
     st.session_state[SESSION_COOKIE_FAILURE] = _resolve_cookie_failure_state(
         previous_failed=bool(st.session_state.get(SESSION_COOKIE_FAILURE, False)),
         notice=notice,
@@ -531,13 +538,13 @@ def _render_cookie_panel(user_state_store: UserStateStore, tasks: list[Task]) ->
                 except ValueError as exc:
                     st.error(str(exc))
                 else:
-                    st.session_state["douyin_cookie_input"] = ""
+                    st.session_state[SESSION_COOKIE_INPUT_RESET] = True
                     st.session_state[SESSION_COOKIE_NOTICE] = "saved"
                     st.rerun()
         with clear_col:
             if st.button("清空 Cookie", use_container_width=True):
                 user_state_store.clear_cookie()
-                st.session_state["douyin_cookie_input"] = ""
+                st.session_state[SESSION_COOKIE_INPUT_RESET] = True
                 st.session_state[SESSION_COOKIE_NOTICE] = "cleared"
                 st.rerun()
 

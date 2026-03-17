@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from app import _resolve_cookie_failure_state
+from app import SESSION_COOKIE_INPUT_RESET, _consume_cookie_input_reset, _resolve_cookie_failure_state
 from video2prompt.models import Task
 
 
@@ -24,3 +24,15 @@ def test_cookie_failure_state_resets_after_cookie_saved() -> None:
     result = _resolve_cookie_failure_state(previous_failed=True, notice="saved", tasks=tasks)
 
     assert not result
+
+
+def test_cookie_input_reset_clears_value_before_next_render() -> None:
+    session_state = {
+        "douyin_cookie_input": "sessionid=abc",
+        SESSION_COOKIE_INPUT_RESET: True,
+    }
+
+    _consume_cookie_input_reset(session_state)
+
+    assert session_state["douyin_cookie_input"] == ""
+    assert SESSION_COOKIE_INPUT_RESET not in session_state
