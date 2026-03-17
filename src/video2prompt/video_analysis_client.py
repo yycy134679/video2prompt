@@ -6,7 +6,7 @@ from typing import Protocol
 
 
 class VideoAnalysisClient(Protocol):
-    """统一的视频解读客户端协议。"""
+    """火山原生视频解读客户端协议。"""
 
     async def interpret_video(
         self,
