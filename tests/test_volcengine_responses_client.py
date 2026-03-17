@@ -113,6 +113,42 @@ def test_create_response_with_file_id_success() -> None:
     assert observation["api_mode"] == "responses_file_id"
 
 
+def test_create_response_stream_aggregates_text_and_usage() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content.decode("utf-8"))
+        assert payload["stream"] is True
+        return httpx.Response(
+            status_code=200,
+            headers={"x-request-id": "req-stream"},
+            content=(
+                'data: {"type":"response.output_text.delta","delta":"第一段"}\n\n'
+                'data: {"type":"response.output_text.delta","delta":"第二段"}\n\n'
+                'data: {"type":"response.completed","response":{"usage":{"input_tokens":10,"output_tokens":20}}}\n\n'
+                "data: [DONE]\n\n"
+            ),
+        )
+
+    async def _run() -> tuple[str, dict[str, int | str]]:
+        transport = httpx.MockTransport(handler)
+        async with httpx.AsyncClient(transport=transport) as http_client:
+            client = VolcengineResponsesClient(
+                base_url="https://ark.cn-beijing.volces.com/api/v3",
+                endpoint_id="ep-test",
+                api_key="k",
+                stream=True,
+                http_client=http_client,
+            )
+            text = await client.create_response_with_file_id("file-123", "请分析视频")
+            return text, client.consume_last_observation()
+
+    text, observation = asyncio.run(_run())
+    assert text == "第一段第二段"
+    assert observation["prompt_tokens"] == 10
+    assert observation["completion_tokens"] == 20
+    assert observation["request_id"] == "req-stream"
+    assert observation["api_mode"] == "responses_file_id"
+
+
 def test_create_response_with_file_id_empty_output() -> None:
     def handler(_: httpx.Request) -> httpx.Response:
         return httpx.Response(status_code=200, json={"output": []})

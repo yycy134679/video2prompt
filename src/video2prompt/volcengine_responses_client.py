@@ -25,6 +25,7 @@ class VolcengineResponsesClient:
         reasoning_effort: str = "medium",
         max_output_tokens: int | None = None,
         max_completion_tokens: int | None = None,
+        stream: bool = False,
         http_client: httpx.AsyncClient | None = None,
     ):
         self.base_url = base_url.rstrip("/")
@@ -36,6 +37,7 @@ class VolcengineResponsesClient:
         self.max_output_tokens = (
             max_output_tokens if max_output_tokens is not None else max_completion_tokens
         )
+        self.stream = bool(stream)
         self._http_client = http_client
         self._default_user_prompt = self.DEFAULT_USER_PROMPT
         self._last_observation: dict[str, Any] = self._empty_observation()
@@ -73,6 +75,8 @@ class VolcengineResponsesClient:
             body["reasoning"] = {"effort": self.reasoning_effort}
         if self.max_output_tokens is not None:
             body["max_output_tokens"] = int(self.max_output_tokens)
+        if self.stream:
+            body["stream"] = True
         return body
 
     def _build_video_url_input(self, video_url: str, prompt: str, fps: float) -> list[dict[str, Any]]:
@@ -114,6 +118,15 @@ class VolcengineResponsesClient:
         }
 
         try:
+            if self.stream:
+                return await self._request_stream_and_extract(
+                    client=client,
+                    url=url,
+                    headers=headers,
+                    body=body,
+                    api_mode=api_mode,
+                )
+
             resp = await client.post(url, headers=headers, json=body)
             if resp.status_code in {429, 500, 502, 503, 504}:
                 raise GeminiRetryableError(f"Responses 状态码 {resp.status_code}: {resp.text[:500]}")
@@ -140,6 +153,80 @@ class VolcengineResponsesClient:
         finally:
             if close_client:
                 await client.aclose()
+
+    async def _request_stream_and_extract(
+        self,
+        client: httpx.AsyncClient,
+        url: str,
+        headers: dict[str, str],
+        body: dict[str, Any],
+        api_mode: str,
+    ) -> str:
+        chunks: list[str] = []
+        usage: dict[str, int] = {}
+        request_id = ""
+        completed_response: dict[str, Any] = {}
+
+        async with client.stream("POST", url, headers=headers, json=body) as resp:
+            if resp.status_code in {429, 500, 502, 503, 504}:
+                raise GeminiRetryableError(f"Responses 状态码 {resp.status_code}: {resp.text[:500]}")
+            if resp.status_code >= 400:
+                raise GeminiError(f"Responses 状态码 {resp.status_code}: {resp.text[:500]}")
+
+            request_id = self._extract_request_id(resp, {})
+            async for line in resp.aiter_lines():
+                event = self._parse_sse_line(line)
+                if not event:
+                    continue
+
+                event_type = str(event.get("type", "")).strip()
+                if event_type == "response.output_text.delta":
+                    delta = event.get("delta")
+                    if isinstance(delta, str):
+                        chunks.append(delta)
+                elif event_type == "response.completed":
+                    response_payload = event.get("response")
+                    if isinstance(response_payload, dict):
+                        completed_response = response_payload
+                        usage = self.extract_usage(response_payload)
+                        request_id = self._extract_request_id(resp, response_payload) or request_id
+
+                if not usage:
+                    latest_usage = self.extract_usage(event)
+                    if any(latest_usage.values()):
+                        usage = latest_usage
+                request_id = self._extract_request_id(resp, event) or request_id
+
+        self._last_observation = {
+            **self._last_observation,
+            "prompt_tokens": int(usage.get("prompt_tokens", 0)),
+            "completion_tokens": int(usage.get("completion_tokens", 0)),
+            "reasoning_tokens": int(usage.get("reasoning_tokens", 0)),
+            "cached_tokens": int(usage.get("cached_tokens", 0)),
+            "request_id": request_id,
+            "api_mode": api_mode,
+        }
+
+        text = "".join(chunks).strip()
+        if not text and completed_response:
+            text = self._extract_text(completed_response)
+        if not text:
+            raise GeminiError("Responses 流式返回为空")
+        return text
+
+    @staticmethod
+    def _parse_sse_line(line: str) -> dict[str, Any] | None:
+        text = (line or "").strip()
+        if not text or not text.startswith("data:"):
+            return None
+        payload = text[5:].strip()
+        if not payload or payload == "[DONE]":
+            return None
+        try:
+            data = httpx.Response(status_code=200, content=payload).json()
+        except ValueError:
+            return None
+        return data if isinstance(data, dict) else None
 
     @staticmethod
     def _extract_text(payload: dict[str, Any]) -> str:
