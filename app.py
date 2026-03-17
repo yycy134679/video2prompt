@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import contextlib
 import hashlib
 import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, MutableMapping
+from uuid import uuid4
 
 import httpx
 import streamlit as st
@@ -45,7 +47,7 @@ SESSION_EXCEL_DOWNLOAD = "excel_download_payload"
 SESSION_MARKDOWN_DOWNLOAD = "markdown_download_payload"
 SESSION_DURATION_SHORT_DOWNLOAD = "duration_short_download_payload"
 SESSION_DURATION_LONG_FAILED_DOWNLOAD = "duration_long_failed_download_payload"
-SESSION_RUN_CONTROLLER = "run_controller"
+SESSION_RUN_CONTROLLER = "run_controller_id"
 SESSION_COOKIE_NOTICE = "cookie_notice"
 SESSION_COOKIE_FAILURE = "cookie_failure"
 SESSION_COOKIE_INPUT_RESET = "cookie_input_reset"
@@ -68,6 +70,14 @@ class RunController:
     cancel_event: asyncio.Event | None = None
     thread: threading.Thread | None = None
     lock: threading.Lock = field(default_factory=threading.Lock)
+
+
+@st.cache_resource
+def _get_run_controller_registry() -> dict[str, RunController]:
+    return {}
+
+
+RUN_CONTROLLER_REGISTRY = _get_run_controller_registry()
 
 
 def _task_to_row(task: Task) -> dict[str, Any]:
@@ -270,11 +280,48 @@ async def _run_duration_checker(
         await parser_http.aclose()
 
 
-def _get_run_controller() -> RunController | None:
-    controller = st.session_state.get(SESSION_RUN_CONTROLLER)
+def _store_run_controller(controller: RunController, session_state: MutableMapping[str, Any] | None = None) -> str:
+    state = st.session_state if session_state is None else session_state
+    registry = _get_run_controller_registry()
+    previous_id = state.get(SESSION_RUN_CONTROLLER)
+    if isinstance(previous_id, str):
+        registry.pop(previous_id, None)
+
+    controller_id = uuid4().hex
+    registry[controller_id] = controller
+    state[SESSION_RUN_CONTROLLER] = controller_id
+    return controller_id
+
+
+def _get_run_controller(session_state: MutableMapping[str, Any] | None = None) -> RunController | None:
+    state = st.session_state if session_state is None else session_state
+    controller = state.get(SESSION_RUN_CONTROLLER)
     if isinstance(controller, RunController):
         return controller
-    return None
+    if not isinstance(controller, str):
+        return None
+    return _get_run_controller_registry().get(controller)
+
+
+def _clear_run_controller(session_state: MutableMapping[str, Any] | None = None) -> None:
+    state = st.session_state if session_state is None else session_state
+    controller_id = state.pop(SESSION_RUN_CONTROLLER, None)
+    if isinstance(controller_id, str):
+        _get_run_controller_registry().pop(controller_id, None)
+
+
+def _persist_completed_run_snapshot(
+    controller: RunController | None,
+    session_state: MutableMapping[str, Any] | None = None,
+) -> None:
+    if controller is None:
+        return
+
+    state = st.session_state if session_state is None else session_state
+    state["last_tasks"] = copy.deepcopy(controller.tasks)
+    state["last_app_mode"] = controller.app_mode_value
+    state["last_default_user_prompt"] = controller.default_user_prompt
+    state["last_output_format"] = controller.output_format
 
 
 def _sync_run_controller_state(controller: RunController | None) -> None:
@@ -287,6 +334,8 @@ def _sync_run_controller_state(controller: RunController | None) -> None:
         controller.finished = True
         controller.loop = None
         controller.cancel_event = None
+    _persist_completed_run_snapshot(controller)
+    _clear_run_controller()
 
 
 def _is_run_active(controller: RunController | None) -> bool:
@@ -841,11 +890,8 @@ def main() -> None:
             )
         controller.thread = worker
 
-        st.session_state["last_tasks"] = tasks
-        st.session_state["last_app_mode"] = app_mode.value
-        st.session_state["last_default_user_prompt"] = default_user_prompt
-        st.session_state["last_output_format"] = output_format
-        st.session_state[SESSION_RUN_CONTROLLER] = controller
+        st.session_state["last_tasks"] = []
+        _store_run_controller(controller)
 
         worker.start()
         st.rerun()
