@@ -15,7 +15,14 @@ import httpx
 
 from .cache_store import CacheStore
 from .circuit_breaker import CircuitBreaker
-from .errors import CircuitBreakerOpenError, GeminiError, GeminiRetryableError, ParserError, ParserRetryableError
+from .errors import (
+    CircuitBreakerOpenError,
+    GeminiError,
+    GeminiRetryableError,
+    ParserClientSideError,
+    ParserError,
+    ParserRetryableError,
+)
 from .logging_utils import build_model_log_extra
 from .models import AppConfig, ParseResult, Task, TaskState
 from .parser_client import ParserClient
@@ -322,7 +329,7 @@ class TaskScheduler:
                 await self._backoff_wait("parser", attempt, on_update=on_update, task=task, cancel_event=cancel_event)
             except ParserError as exc:
                 # 对 4xx 这类链接/输入问题不计入熔断，避免误判为服务整体不可用。
-                if self._is_parser_client_side_error(str(exc)):
+                if self._is_parser_client_side_error(exc):
                     self.logger.error("解析不可重试错误（不计入熔断）: %s", exc)
                 else:
                     self.parser_breaker.record_failure()
@@ -738,8 +745,8 @@ class TaskScheduler:
         raise CircuitBreakerOpenError(reason)
 
     @staticmethod
-    def _is_parser_client_side_error(message: str) -> bool:
-        return "解析服务状态码 4" in message
+    def _is_parser_client_side_error(exc: ParserError) -> bool:
+        return isinstance(exc, ParserClientSideError)
 
     @staticmethod
     def _is_burst_limit_error(message: str) -> bool:

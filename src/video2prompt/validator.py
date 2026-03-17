@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from urllib.parse import urlparse
 
 from .models import TaskInput, ValidationResult
@@ -10,8 +11,9 @@ from .models import TaskInput, ValidationResult
 class InputValidator:
     """输入校验器。"""
 
-    VALID_DOMAINS = ("douyin.com", "iesdouyin.com", "tiktok.com")
-    INVALID_LINK_ERROR = "无效抖音/TikTok 链接"
+    VALID_DOMAINS = ("douyin.com", "iesdouyin.com")
+    URL_PATTERN = re.compile(r"https?://[^\s]+")
+    INVALID_LINK_ERROR = "无效抖音链接"
     UNCATEGORIZED = "未分类"
 
     @staticmethod
@@ -46,8 +48,9 @@ class InputValidator:
         if not raw:
             return False
 
-        # 允许用户输入不带 schema 的链接，统一补齐后做域名校验。
-        normalized = raw if "://" in raw else f"https://{raw}"
+        matched = InputValidator.URL_PATTERN.search(raw)
+        normalized = matched.group(0).rstrip(".,)") if matched else raw
+        normalized = normalized if "://" in normalized else f"https://{normalized}"
         parsed = urlparse(normalized)
         if parsed.scheme and parsed.scheme not in ("http", "https"):
             return False
