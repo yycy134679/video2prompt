@@ -3,7 +3,7 @@ volcengine:
   # 火山方舟 API 基础地址
   base_url: "https://ark.cn-beijing.volces.com/api/v3"
   # 推理接入点 ID
-  endpoint_id: "ep-20260225230351-dx6fm"
+  endpoint_id: "ep-m-20260227145730-85ww4"
   # 火山请求超时时间（秒）
   timeout_seconds: 300
   # 视频采样帧率（video_url 模式有效，范围 0.2-5）
@@ -11,7 +11,7 @@ volcengine:
   # 思考模式（enabled/disabled/auto）
   thinking_type: "enabled"
   # 思考强度（minimal/low/medium/high）
-  reasoning_effort: "high"
+  reasoning_effort: "medium"
   # 最大输出 token 数（null 表示不显式下发）
   max_output_tokens: null
   # 输入模式（auto/video_url/file_id）
@@ -32,7 +32,7 @@ parser:
   # 兼容保留字段：当前版本不再依赖外部 HTTP 解析服务，读取但忽略
   base_url: "http://localhost:80"
   # 并发解析任务数（建议 1-5）
-  concurrency: 5
+  concurrency: 3
   # 每次解析完成后，槽位冷却最小秒数
   pre_delay_min_seconds: 3.0
   # 每次解析完成后，槽位冷却最大秒数
