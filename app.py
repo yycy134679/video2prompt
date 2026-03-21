@@ -25,7 +25,11 @@ from video2prompt.excel_exporter import ExcelExporter
 from video2prompt.logging_utils import setup_logging
 from video2prompt.markdown_exporter import MarkdownExporter
 from video2prompt.models import AppMode, Task, TaskInput
-from video2prompt.parser_client import COOKIE_REQUIRED_MESSAGE, COOKIE_RETRY_HINT, ParserClient
+from video2prompt.parser_client import (
+    COOKIE_REQUIRED_MESSAGE,
+    COOKIE_RETRY_HINT,
+    ParserClient,
+)
 from video2prompt.review_result import DEFAULT_REVIEW_PROMPT
 from video2prompt.task_scheduler import TaskScheduler
 from video2prompt.user_state_store import UserStateStore
@@ -39,7 +43,9 @@ OUTPUT_FORMAT_LABEL_TO_VALUE = {
     "纯文本（默认）": OUTPUT_FORMAT_PLAIN_TEXT,
     "JSON": OUTPUT_FORMAT_JSON,
 }
-OUTPUT_FORMAT_VALUE_TO_LABEL = {value: label for label, value in OUTPUT_FORMAT_LABEL_TO_VALUE.items()}
+OUTPUT_FORMAT_VALUE_TO_LABEL = {
+    value: label for label, value in OUTPUT_FORMAT_LABEL_TO_VALUE.items()
+}
 SESSION_EXCEL_DOWNLOAD = "excel_download_payload"
 SESSION_MARKDOWN_DOWNLOAD = "markdown_download_payload"
 SESSION_DURATION_SHORT_DOWNLOAD = "duration_short_download_payload"
@@ -48,6 +54,14 @@ SESSION_RUN_CONTROLLER = "run_controller_id"
 SESSION_COOKIE_NOTICE = "cookie_notice"
 SESSION_COOKIE_FAILURE = "cookie_failure"
 SESSION_COOKIE_INPUT_RESET = "cookie_input_reset"
+SESSION_VIDEO_PROMPT = "video_prompt"
+SESSION_TRANSLATION_COMPLIANCE_PROMPT = "translation_compliance_prompt"
+SESSION_VIDEO_PROMPT_OUTPUT_FORMAT = "video_prompt_output_format"
+SETTING_VIDEO_PROMPT = "prompt.video_prompt"
+SETTING_TRANSLATION_COMPLIANCE_PROMPT = "prompt.translation_compliance"
+SETTING_VIDEO_PROMPT_OUTPUT_FORMAT = "output_format.video_prompt"
+VIDEO_PROMPT_TEMPLATE_PATH = Path("docs/视频复刻提示词.md")
+TRANSLATION_COMPLIANCE_TEMPLATE_PATH = Path("docs/视频内容审查.md")
 
 
 @dataclass
@@ -69,12 +83,131 @@ class RunController:
     lock: threading.Lock = field(default_factory=threading.Lock)
 
 
+@dataclass(frozen=True)
+class ResolvedRunSettings:
+    prompt_text: str
+    output_format: str
+
+
 @st.cache_resource
 def _get_run_controller_registry() -> dict[str, RunController]:
     return {}
 
 
 RUN_CONTROLLER_REGISTRY = _get_run_controller_registry()
+
+
+def resolve_output_format_for_mode(
+    app_mode: AppMode, session_state: MutableMapping[str, Any]
+) -> str:
+    if app_mode == AppMode.TRANSLATION_COMPLIANCE:
+        return OUTPUT_FORMAT_JSON
+    saved_output_format = session_state.get(SESSION_VIDEO_PROMPT_OUTPUT_FORMAT)
+    if saved_output_format in OUTPUT_FORMAT_VALUE_TO_LABEL:
+        return str(saved_output_format)
+    current_output_format = session_state.get("output_format", OUTPUT_FORMAT_PLAIN_TEXT)
+    if current_output_format in OUTPUT_FORMAT_VALUE_TO_LABEL:
+        return str(current_output_format)
+    return OUTPUT_FORMAT_PLAIN_TEXT
+
+
+def resolve_mode_prompt(
+    app_mode: AppMode,
+    session_state: MutableMapping[str, Any],
+    video_prompt_default: str,
+    translation_prompt_default: str,
+) -> str:
+    session_key = (
+        SESSION_TRANSLATION_COMPLIANCE_PROMPT
+        if app_mode == AppMode.TRANSLATION_COMPLIANCE
+        else SESSION_VIDEO_PROMPT
+    )
+    prompt = session_state.get(session_key)
+    if isinstance(prompt, str):
+        return prompt
+    if app_mode == AppMode.TRANSLATION_COMPLIANCE:
+        return translation_prompt_default
+    return video_prompt_default
+
+
+def normalize_runtime_prompt(prompt: str, default_prompt: str) -> str:
+    normalized_prompt = (prompt or "").strip()
+    return normalized_prompt or default_prompt
+
+
+def load_prompt_template(path: Path, fallback_text: str) -> str:
+    try:
+        text = path.read_text(encoding="utf-8").strip()
+    except OSError:
+        return fallback_text
+    return text or fallback_text
+
+
+def choose_video_prompt_initial_value(
+    saved_prompt: str | None,
+    legacy_prompt: str | None,
+    default_prompt: str,
+) -> str:
+    return (
+        (saved_prompt or "").strip() or (legacy_prompt or "").strip() or default_prompt
+    )
+
+
+def choose_translation_prompt_initial_value(
+    saved_prompt: str | None,
+    default_prompt: str,
+) -> str:
+    return (saved_prompt or "").strip() or default_prompt
+
+
+def resolve_prompt_setting_key(app_mode: AppMode) -> str:
+    if app_mode == AppMode.TRANSLATION_COMPLIANCE:
+        return SETTING_TRANSLATION_COMPLIANCE_PROMPT
+    return SETTING_VIDEO_PROMPT
+
+
+def should_persist_output_format(app_mode: AppMode) -> bool:
+    return app_mode in {AppMode.VIDEO_PROMPT, AppMode.CATEGORY_ANALYSIS}
+
+
+def build_persist_operations(
+    app_mode: AppMode,
+    prompt_text: str,
+    output_format: str,
+) -> list[tuple[str, str]]:
+    operations = [(resolve_prompt_setting_key(app_mode), prompt_text)]
+    if should_persist_output_format(app_mode):
+        operations.append((SETTING_VIDEO_PROMPT_OUTPUT_FORMAT, output_format))
+    return operations
+
+
+def build_run_settings(
+    app_mode: AppMode,
+    prompt_text: str,
+    video_prompt_default: str,
+    translation_prompt_default: str,
+    session_state: MutableMapping[str, Any],
+) -> ResolvedRunSettings:
+    default_prompt = (
+        translation_prompt_default
+        if app_mode == AppMode.TRANSLATION_COMPLIANCE
+        else video_prompt_default
+    )
+    return ResolvedRunSettings(
+        prompt_text=normalize_runtime_prompt(prompt_text, default_prompt),
+        output_format=resolve_output_format_for_mode(app_mode, session_state),
+    )
+
+
+def build_controller_payload(
+    app_mode: AppMode,
+    resolved_settings: ResolvedRunSettings,
+) -> dict[str, str]:
+    return {
+        "app_mode_value": app_mode.value,
+        "default_user_prompt": resolved_settings.prompt_text,
+        "output_format": resolved_settings.output_format,
+    }
 
 
 def _task_to_row(task: Task) -> dict[str, Any]:
@@ -111,7 +244,9 @@ def _duration_bucket_label(bucket: str) -> str:
     return ""
 
 
-def _rows(tasks: list[Task], show_category: bool, show_duration: bool) -> list[dict[str, Any]]:
+def _rows(
+    tasks: list[Task], show_category: bool, show_duration: bool
+) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for task in tasks:
         row = _task_to_row(task)
@@ -119,14 +254,18 @@ def _rows(tasks: list[Task], show_category: bool, show_duration: bool) -> list[d
             row["类目"] = task.category or InputValidator.UNCATEGORIZED
         if show_duration:
             row["视频时长(s)"] = (
-                round(float(task.video_duration_seconds), 3) if task.video_duration_seconds is not None else None
+                round(float(task.video_duration_seconds), 3)
+                if task.video_duration_seconds is not None
+                else None
             )
             row["时长分组"] = _duration_bucket_label(task.duration_check_bucket)
         rows.append(row)
     return rows
 
 
-def _render_table(table_placeholder, tasks: list[Task], show_category: bool, show_duration: bool) -> None:
+def _render_table(
+    table_placeholder, tasks: list[Task], show_category: bool, show_duration: bool
+) -> None:
     table_placeholder.dataframe(
         _rows(tasks, show_category=show_category, show_duration=show_duration),
         width="stretch",
@@ -240,7 +379,9 @@ async def _run_duration_checker(
         await parser_http.aclose()
 
 
-def _store_run_controller(controller: RunController, session_state: MutableMapping[str, Any] | None = None) -> str:
+def _store_run_controller(
+    controller: RunController, session_state: MutableMapping[str, Any] | None = None
+) -> str:
     state = st.session_state if session_state is None else session_state
     registry = _get_run_controller_registry()
     previous_id = state.get(SESSION_RUN_CONTROLLER)
@@ -253,7 +394,9 @@ def _store_run_controller(controller: RunController, session_state: MutableMappi
     return controller_id
 
 
-def _get_run_controller(session_state: MutableMapping[str, Any] | None = None) -> RunController | None:
+def _get_run_controller(
+    session_state: MutableMapping[str, Any] | None = None,
+) -> RunController | None:
     state = st.session_state if session_state is None else session_state
     controller = state.get(SESSION_RUN_CONTROLLER)
     if isinstance(controller, RunController):
@@ -263,7 +406,9 @@ def _get_run_controller(session_state: MutableMapping[str, Any] | None = None) -
     return _get_run_controller_registry().get(controller)
 
 
-def _clear_run_controller(session_state: MutableMapping[str, Any] | None = None) -> None:
+def _clear_run_controller(
+    session_state: MutableMapping[str, Any] | None = None,
+) -> None:
     state = st.session_state if session_state is None else session_state
     controller_id = state.pop(SESSION_RUN_CONTROLLER, None)
     if isinstance(controller_id, str):
@@ -366,7 +511,9 @@ def _scheduler_thread_entry(
             for pending_task in pending:
                 pending_task.cancel()
             if pending:
-                loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+                loop.run_until_complete(
+                    asyncio.gather(*pending, return_exceptions=True)
+                )
         loop.close()
 
 
@@ -413,12 +560,16 @@ def _duration_checker_thread_entry(
             for pending_task in pending:
                 pending_task.cancel()
             if pending:
-                loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+                loop.run_until_complete(
+                    asyncio.gather(*pending, return_exceptions=True)
+                )
         loop.close()
 
 
 def _resolve_last_mode() -> AppMode:
-    last_mode_value = str(st.session_state.get("last_app_mode", AppMode.VIDEO_PROMPT.value))
+    last_mode_value = str(
+        st.session_state.get("last_app_mode", AppMode.VIDEO_PROMPT.value)
+    )
     try:
         return AppMode(last_mode_value)
     except ValueError:
@@ -447,7 +598,12 @@ def _render_runtime_panel(controller: RunController | None) -> None:
             show_duration = last_mode == AppMode.DURATION_CHECK
 
         if tasks_to_render:
-            _render_table(st, tasks_to_render, show_category=show_category, show_duration=show_duration)
+            _render_table(
+                st,
+                tasks_to_render,
+                show_category=show_category,
+                show_duration=show_duration,
+            )
 
         if current_controller is None:
             return
@@ -493,7 +649,9 @@ def _has_cookie_failure(tasks: list[Task]) -> bool:
     return any(COOKIE_RETRY_HINT in (task.error_message or "") for task in tasks)
 
 
-def _resolve_cookie_failure_state(previous_failed: bool, notice: str, tasks: list[Task]) -> bool:
+def _resolve_cookie_failure_state(
+    previous_failed: bool, notice: str, tasks: list[Task]
+) -> bool:
     if notice in {"saved", "cleared"}:
         return False
     if tasks:
@@ -532,7 +690,9 @@ def _render_cookie_panel(user_state_store: UserStateStore, tasks: list[Task]) ->
             st.success("状态：已保存 Cookie（未验证）")
 
         st.caption(f"本地保存位置：{user_state_store.path}")
-        st.caption("Cookie 仅保存在当前用户目录，不会写回 config.yaml，也不会写入 SQLite 缓存。")
+        st.caption(
+            "Cookie 仅保存在当前用户目录，不会写回 config.yaml，也不会写入 SQLite 缓存。"
+        )
         st.text_area(
             "手动粘贴抖音 Cookie",
             key="douyin_cookie_input",
@@ -543,7 +703,9 @@ def _render_cookie_panel(user_state_store: UserStateStore, tasks: list[Task]) ->
         with save_col:
             if st.button("保存 Cookie", use_container_width=True):
                 try:
-                    user_state_store.save_cookie(str(st.session_state.get("douyin_cookie_input", "")))
+                    user_state_store.save_cookie(
+                        str(st.session_state.get("douyin_cookie_input", ""))
+                    )
                 except ValueError as exc:
                     st.error(str(exc))
                 else:
@@ -582,11 +744,38 @@ def main() -> None:
     cache = CacheStore(base_config.cache.db_path)
     asyncio.run(cache.init_db())
 
-    if "default_user_prompt" not in st.session_state:
-        saved_prompt = asyncio.run(cache.load_system_prompt())
-        st.session_state["default_user_prompt"] = saved_prompt or DEFAULT_REVIEW_PROMPT
+    video_prompt_template = load_prompt_template(VIDEO_PROMPT_TEMPLATE_PATH, "")
+    translation_prompt_template = load_prompt_template(
+        TRANSLATION_COMPLIANCE_TEMPLATE_PATH,
+        DEFAULT_REVIEW_PROMPT,
+    )
+    if SESSION_VIDEO_PROMPT not in st.session_state:
+        st.session_state[SESSION_VIDEO_PROMPT] = choose_video_prompt_initial_value(
+            asyncio.run(cache.load_setting(SETTING_VIDEO_PROMPT)),
+            asyncio.run(cache.load_system_prompt()),
+            video_prompt_template,
+        )
+    if SESSION_TRANSLATION_COMPLIANCE_PROMPT not in st.session_state:
+        st.session_state[SESSION_TRANSLATION_COMPLIANCE_PROMPT] = (
+            choose_translation_prompt_initial_value(
+                asyncio.run(cache.load_setting(SETTING_TRANSLATION_COMPLIANCE_PROMPT)),
+                translation_prompt_template,
+            )
+        )
+    if SESSION_VIDEO_PROMPT_OUTPUT_FORMAT not in st.session_state:
+        saved_output_format = asyncio.run(
+            cache.load_setting(SETTING_VIDEO_PROMPT_OUTPUT_FORMAT)
+        )
+        if saved_output_format in OUTPUT_FORMAT_VALUE_TO_LABEL:
+            st.session_state[SESSION_VIDEO_PROMPT_OUTPUT_FORMAT] = saved_output_format
+        else:
+            st.session_state[SESSION_VIDEO_PROMPT_OUTPUT_FORMAT] = (
+                OUTPUT_FORMAT_PLAIN_TEXT
+            )
     if "output_format" not in st.session_state:
-        st.session_state["output_format"] = OUTPUT_FORMAT_PLAIN_TEXT
+        st.session_state["output_format"] = str(
+            st.session_state[SESSION_VIDEO_PROMPT_OUTPUT_FORMAT]
+        )
     if "app_mode" not in st.session_state:
         st.session_state["app_mode"] = AppMode.VIDEO_PROMPT.value
     if SESSION_EXCEL_DOWNLOAD not in st.session_state:
@@ -618,16 +807,25 @@ def main() -> None:
     )
     st.session_state["app_mode"] = selected_mode
     app_mode = AppMode(selected_mode)
+    st.session_state["output_format"] = resolve_output_format_for_mode(
+        app_mode, st.session_state
+    )
 
     user_state_store = UserStateStore()
     run_controller = _get_run_controller()
     _sync_run_controller_state(run_controller)
-    _render_cookie_panel(user_state_store, _visible_tasks_for_cookie_status(run_controller))
+    _render_cookie_panel(
+        user_state_store, _visible_tasks_for_cookie_status(run_controller)
+    )
 
     runtime_overrides: dict[str, Any] = {}
     output_format = OUTPUT_FORMAT_PLAIN_TEXT
-    with st.expander("运行时配置覆盖（仅本次运行生效，不写回 config.yaml）", expanded=False):
-        st.caption("页面仅保留常用运行参数；退避、熔断、批量 Chat、完成后等待等高级项请在 config.yaml 中调整。")
+    with st.expander(
+        "运行时配置覆盖（仅本次运行生效，不写回 config.yaml）", expanded=False
+    ):
+        st.caption(
+            "页面仅保留常用运行参数；退避、熔断、批量 Chat、完成后等待等高级项请在 config.yaml 中调整。"
+        )
         if app_mode == AppMode.DURATION_CHECK:
             st.caption("时长判断模式仅使用解析与时长探测，不会调用模型。")
             runtime_overrides["parser.concurrency"] = st.number_input(
@@ -637,17 +835,10 @@ def main() -> None:
                 value=base_config.parser.concurrency,
                 step=1,
             )
-        else:
-            current_output_format = str(st.session_state.get("output_format", OUTPUT_FORMAT_PLAIN_TEXT))
-            current_output_label = OUTPUT_FORMAT_VALUE_TO_LABEL.get(current_output_format, "纯文本（默认）")
-            output_format_label = st.selectbox(
-                "输出格式",
-                options=list(OUTPUT_FORMAT_LABEL_TO_VALUE.keys()),
-                index=list(OUTPUT_FORMAT_LABEL_TO_VALUE.keys()).index(current_output_label),
-                help="纯文本会保留模型原始输出；JSON 会按现有规则解析为“能否翻译+信息摘要”。",
-            )
-            output_format = OUTPUT_FORMAT_LABEL_TO_VALUE[output_format_label]
+        elif app_mode == AppMode.TRANSLATION_COMPLIANCE:
+            output_format = OUTPUT_FORMAT_JSON
             st.session_state["output_format"] = output_format
+            st.caption("翻译合规判断模式固定使用 JSON 输出。")
             col1, col2 = st.columns(2)
             with col1:
                 runtime_overrides["parser.concurrency"] = st.number_input(
@@ -666,7 +857,9 @@ def main() -> None:
                 )
             with col2:
                 thinking_options = ["enabled", "disabled", "auto"]
-                current_thinking = (base_config.volcengine.thinking_type or "enabled").strip().lower()
+                current_thinking = (
+                    (base_config.volcengine.thinking_type or "enabled").strip().lower()
+                )
                 if current_thinking not in thinking_options:
                     current_thinking = "enabled"
                 runtime_overrides["volcengine.thinking_type"] = st.selectbox(
@@ -675,7 +868,73 @@ def main() -> None:
                     index=thinking_options.index(current_thinking),
                 )
                 reasoning_options = ["minimal", "low", "medium", "high"]
-                current_reasoning = (base_config.volcengine.reasoning_effort or "medium").strip().lower()
+                current_reasoning = (
+                    (base_config.volcengine.reasoning_effort or "medium")
+                    .strip()
+                    .lower()
+                )
+                if current_reasoning not in reasoning_options:
+                    current_reasoning = "medium"
+                runtime_overrides["volcengine.reasoning_effort"] = st.selectbox(
+                    "思考强度（volcengine.reasoning_effort）",
+                    options=reasoning_options,
+                    index=reasoning_options.index(current_reasoning),
+                )
+        else:
+            current_output_format = resolve_output_format_for_mode(
+                app_mode, st.session_state
+            )
+            current_output_label = OUTPUT_FORMAT_VALUE_TO_LABEL.get(
+                current_output_format, "纯文本（默认）"
+            )
+            output_format_label = st.selectbox(
+                "输出格式",
+                options=list(OUTPUT_FORMAT_LABEL_TO_VALUE.keys()),
+                index=list(OUTPUT_FORMAT_LABEL_TO_VALUE.keys()).index(
+                    current_output_label
+                ),
+                help="纯文本会保留模型原始输出；JSON 会按现有规则解析为“能否翻译+信息摘要”。",
+            )
+            output_format = OUTPUT_FORMAT_LABEL_TO_VALUE[output_format_label]
+            st.session_state["output_format"] = output_format
+            st.session_state[SESSION_VIDEO_PROMPT_OUTPUT_FORMAT] = output_format
+            asyncio.run(
+                cache.save_setting(SETTING_VIDEO_PROMPT_OUTPUT_FORMAT, output_format)
+            )
+            col1, col2 = st.columns(2)
+            with col1:
+                runtime_overrides["parser.concurrency"] = st.number_input(
+                    "解析并发数（parser.concurrency）",
+                    min_value=1,
+                    max_value=50,
+                    value=base_config.parser.concurrency,
+                    step=1,
+                )
+                runtime_overrides["volcengine.video_fps"] = st.number_input(
+                    "模型视频采样帧率（volcengine.video_fps）",
+                    min_value=0.2,
+                    max_value=5.0,
+                    value=float(base_config.volcengine.video_fps),
+                    step=0.1,
+                )
+            with col2:
+                thinking_options = ["enabled", "disabled", "auto"]
+                current_thinking = (
+                    (base_config.volcengine.thinking_type or "enabled").strip().lower()
+                )
+                if current_thinking not in thinking_options:
+                    current_thinking = "enabled"
+                runtime_overrides["volcengine.thinking_type"] = st.selectbox(
+                    "思考模式（volcengine.thinking_type）",
+                    options=thinking_options,
+                    index=thinking_options.index(current_thinking),
+                )
+                reasoning_options = ["minimal", "low", "medium", "high"]
+                current_reasoning = (
+                    (base_config.volcengine.reasoning_effort or "medium")
+                    .strip()
+                    .lower()
+                )
                 if current_reasoning not in reasoning_options:
                     current_reasoning = "medium"
                 runtime_overrides["volcengine.reasoning_effort"] = st.selectbox(
@@ -687,14 +946,43 @@ def main() -> None:
     default_user_prompt = ""
     if app_mode != AppMode.DURATION_CHECK:
         st.subheader("视频解析提示词配置")
+        current_prompt_value = resolve_mode_prompt(
+            app_mode,
+            st.session_state,
+            video_prompt_template,
+            translation_prompt_template,
+        )
+        prompt_widget_key = (
+            "translation_compliance_prompt_input"
+            if app_mode == AppMode.TRANSLATION_COMPLIANCE
+            else "video_prompt_input"
+        )
         default_user_prompt = st.text_area(
             "DEFAULT_USER_PROMPT",
-            value=st.session_state["default_user_prompt"],
+            value=current_prompt_value,
             height=180,
+            key=prompt_widget_key,
         )
         if st.button("保存 DEFAULT_USER_PROMPT"):
-            asyncio.run(cache.save_system_prompt(default_user_prompt or ""))
-            st.session_state["default_user_prompt"] = default_user_prompt or ""
+            resolved_settings = build_run_settings(
+                app_mode,
+                default_user_prompt,
+                video_prompt_template,
+                translation_prompt_template,
+                st.session_state,
+            )
+            st.session_state[
+                SESSION_TRANSLATION_COMPLIANCE_PROMPT
+                if app_mode == AppMode.TRANSLATION_COMPLIANCE
+                else SESSION_VIDEO_PROMPT
+            ] = resolved_settings.prompt_text
+            st.session_state[prompt_widget_key] = resolved_settings.prompt_text
+            for setting_key, setting_value in build_persist_operations(
+                app_mode,
+                resolved_settings.prompt_text,
+                resolved_settings.output_format,
+            ):
+                asyncio.run(cache.save_setting(setting_key, setting_value))
             st.success("DEFAULT_USER_PROMPT 已保存")
     else:
         st.caption("当前模式不使用模型提示词。")
@@ -747,8 +1035,12 @@ def main() -> None:
 
         if app_mode == AppMode.CATEGORY_ANALYSIS:
             category_lines = category_text.splitlines()
-            validation = InputValidator.validate_line_count_with_category(pid_lines, link_lines, category_lines)
-            inputs: list[TaskInput] = InputValidator.parse_lines_with_category(pid_text, link_text, category_text)
+            validation = InputValidator.validate_line_count_with_category(
+                pid_lines, link_lines, category_lines
+            )
+            inputs: list[TaskInput] = InputValidator.parse_lines_with_category(
+                pid_text, link_text, category_text
+            )
         else:
             validation = InputValidator.validate_line_count(pid_lines, link_lines)
             inputs = InputValidator.parse_lines(pid_text, link_text)
@@ -771,9 +1063,15 @@ def main() -> None:
                         f"category={item.category or '<空>'} error={item.error}"
                     )
                 else:
-                    st.write(f"- pid={item.pid or '<空>'} link={item.link or '<空>'} error={item.error}")
+                    st.write(
+                        f"- pid={item.pid or '<空>'} link={item.link or '<空>'} error={item.error}"
+                    )
 
-        tasks = [Task(pid=item.pid, original_link=item.link, category=item.category) for item in inputs if item.is_valid]
+        tasks = [
+            Task(pid=item.pid, original_link=item.link, category=item.category)
+            for item in inputs
+            if item.is_valid
+        ]
         if not tasks:
             st.error("没有可执行的有效任务")
             st.stop()
@@ -786,13 +1084,22 @@ def main() -> None:
             st.error(f"运行时配置无效: {exc}")
             st.stop()
 
+        resolved_settings = build_run_settings(
+            app_mode,
+            default_user_prompt,
+            video_prompt_template,
+            translation_prompt_template,
+            st.session_state,
+        )
+        controller_payload = build_controller_payload(app_mode, resolved_settings)
+
         controller = RunController(
             tasks=tasks,
             show_category=app_mode == AppMode.CATEGORY_ANALYSIS,
             is_duration_mode=app_mode == AppMode.DURATION_CHECK,
-            app_mode_value=app_mode.value,
-            default_user_prompt=default_user_prompt or "",
-            output_format=output_format,
+            app_mode_value=controller_payload["app_mode_value"],
+            default_user_prompt=controller_payload["default_user_prompt"],
+            output_format=controller_payload["output_format"],
             running=True,
             finished=False,
             stop_requested=False,
@@ -819,8 +1126,8 @@ def main() -> None:
                     "controller": controller,
                     "config": runtime_config,
                     "api_key": api_key,
-                    "default_user_prompt": default_user_prompt or "",
-                    "output_format": output_format,
+                    "default_user_prompt": resolved_settings.prompt_text,
+                    "output_format": resolved_settings.output_format,
                     "cache": cache,
                     "logger": logger,
                 },
@@ -898,9 +1205,13 @@ def main() -> None:
                     )
                 st.caption(f"下载失败可直接使用本地文件：`{short_payload['path']}`")
 
-            long_failed_payload = st.session_state.get(SESSION_DURATION_LONG_FAILED_DOWNLOAD)
+            long_failed_payload = st.session_state.get(
+                SESSION_DURATION_LONG_FAILED_DOWNLOAD
+            )
             if long_failed_payload:
-                long_key_suffix = hashlib.sha1(long_failed_payload["data"]).hexdigest()[:12]
+                long_key_suffix = hashlib.sha1(long_failed_payload["data"]).hexdigest()[
+                    :12
+                ]
                 with long_failed_col:
                     st.download_button(
                         label="下载 >15s/失败 Excel",
@@ -910,11 +1221,15 @@ def main() -> None:
                         on_click="ignore",
                         key=f"download_duration_long_failed_{long_key_suffix}",
                     )
-                st.caption(f"下载失败可直接使用本地文件：`{long_failed_payload['path']}`")
+                st.caption(
+                    f"下载失败可直接使用本地文件：`{long_failed_payload['path']}`"
+                )
         elif is_category_mode:
             excel_col, markdown_col, tip_col = st.columns([1, 1, 3])
             with tip_col:
-                st.info("请尽快导出结果查看完整提示词，避免刷新后结果丢失，导出的 Excel 可直接导入 Lumen")
+                st.info(
+                    "请尽快导出结果查看完整提示词，避免刷新后结果丢失，导出的 Excel 可直接导入 Lumen"
+                )
 
             with excel_col:
                 export_excel_clicked = st.button("导出 Excel")
@@ -922,7 +1237,9 @@ def main() -> None:
                 export_markdown_clicked = st.button("导出 Markdown（按类目）")
 
             if export_excel_clicked:
-                exporter = ExcelExporter(template_path="docs/product_prompt_template.xlsx")
+                exporter = ExcelExporter(
+                    template_path="docs/product_prompt_template.xlsx"
+                )
                 output_dir = Path("exports")
                 output_dir.mkdir(parents=True, exist_ok=True)
                 output_file = output_dir / ExcelExporter.generate_filename()
@@ -958,7 +1275,9 @@ def main() -> None:
 
             excel_download_payload = st.session_state.get(SESSION_EXCEL_DOWNLOAD)
             if excel_download_payload:
-                excel_key_suffix = hashlib.sha1(excel_download_payload["data"]).hexdigest()[:12]
+                excel_key_suffix = hashlib.sha1(
+                    excel_download_payload["data"]
+                ).hexdigest()[:12]
                 with excel_col:
                     st.download_button(
                         label="下载 Excel",
@@ -968,11 +1287,15 @@ def main() -> None:
                         on_click="ignore",
                         key=f"download_excel_file_{excel_key_suffix}",
                     )
-                st.caption(f"下载失败可直接使用本地文件：`{excel_download_payload['path']}`")
+                st.caption(
+                    f"下载失败可直接使用本地文件：`{excel_download_payload['path']}`"
+                )
 
             markdown_download_payload = st.session_state.get(SESSION_MARKDOWN_DOWNLOAD)
             if markdown_download_payload:
-                markdown_key_suffix = hashlib.sha1(markdown_download_payload["data"]).hexdigest()[:12]
+                markdown_key_suffix = hashlib.sha1(
+                    markdown_download_payload["data"]
+                ).hexdigest()[:12]
                 with markdown_col:
                     st.download_button(
                         label="下载 Markdown ZIP",
@@ -982,17 +1305,23 @@ def main() -> None:
                         on_click="ignore",
                         key=f"download_markdown_zip_{markdown_key_suffix}",
                     )
-                st.caption(f"下载失败可直接使用本地文件：`{markdown_download_payload['path']}`")
+                st.caption(
+                    f"下载失败可直接使用本地文件：`{markdown_download_payload['path']}`"
+                )
         else:
             excel_col, tip_col = st.columns([1, 3])
             with tip_col:
-                st.info("请尽快导出结果查看完整提示词，避免刷新后结果丢失，导出的 Excel 可直接导入 Lumen")
+                st.info(
+                    "请尽快导出结果查看完整提示词，避免刷新后结果丢失，导出的 Excel 可直接导入 Lumen"
+                )
 
             with excel_col:
                 export_excel_clicked = st.button("导出 Excel")
 
             if export_excel_clicked:
-                exporter = ExcelExporter(template_path="docs/product_prompt_template.xlsx")
+                exporter = ExcelExporter(
+                    template_path="docs/product_prompt_template.xlsx"
+                )
                 output_dir = Path("exports")
                 output_dir.mkdir(parents=True, exist_ok=True)
                 output_file = output_dir / ExcelExporter.generate_filename()
@@ -1010,7 +1339,9 @@ def main() -> None:
 
             excel_download_payload = st.session_state.get(SESSION_EXCEL_DOWNLOAD)
             if excel_download_payload:
-                excel_key_suffix = hashlib.sha1(excel_download_payload["data"]).hexdigest()[:12]
+                excel_key_suffix = hashlib.sha1(
+                    excel_download_payload["data"]
+                ).hexdigest()[:12]
                 with excel_col:
                     st.download_button(
                         label="下载 Excel",
@@ -1020,7 +1351,9 @@ def main() -> None:
                         on_click="ignore",
                         key=f"download_excel_file_{excel_key_suffix}",
                     )
-                st.caption(f"下载失败可直接使用本地文件：`{excel_download_payload['path']}`")
+                st.caption(
+                    f"下载失败可直接使用本地文件：`{excel_download_payload['path']}`"
+                )
 
 
 if __name__ == "__main__":

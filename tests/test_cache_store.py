@@ -9,7 +9,9 @@ from video2prompt.cache_store import CacheStore
 
 
 @pytest.mark.asyncio
-async def test_cache_store_migrates_gemini_output_to_model_output(tmp_path: Path) -> None:
+async def test_cache_store_migrates_gemini_output_to_model_output(
+    tmp_path: Path,
+) -> None:
     db_path = tmp_path / "cache.db"
 
     async with aiosqlite.connect(db_path) as db:
@@ -46,3 +48,23 @@ async def test_cache_store_migrates_gemini_output_to_model_output(tmp_path: Path
     assert cached.model_output == "结果"
     assert cached.can_translate == "能"
     assert cached.fps_used == 1.5
+
+
+@pytest.mark.asyncio
+async def test_cache_store_save_and_load_setting(tmp_path: Path) -> None:
+    store = CacheStore(db_path=str(tmp_path / "cache.db"))
+    await store.init_db()
+
+    await store.save_setting("prompt.video_prompt", "value-a")
+
+    assert await store.load_setting("prompt.video_prompt") == "value-a"
+
+
+@pytest.mark.asyncio
+async def test_cache_store_keeps_legacy_system_prompt_behavior(tmp_path: Path) -> None:
+    store = CacheStore(db_path=str(tmp_path / "cache.db"))
+    await store.init_db()
+
+    await store.save_system_prompt("legacy")
+
+    assert await store.load_system_prompt() == "legacy"

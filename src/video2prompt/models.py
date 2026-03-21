@@ -27,6 +27,7 @@ class AppMode(str, Enum):
     VIDEO_PROMPT = "视频复刻提示词"
     CATEGORY_ANALYSIS = "按类目分析"
     DURATION_CHECK = "视频时长判断"
+    TRANSLATION_COMPLIANCE = "翻译合规判断"
 
 
 @dataclass

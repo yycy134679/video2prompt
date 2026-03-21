@@ -61,7 +61,9 @@ def test_get_run_controller_survives_module_registry_reinitialization() -> None:
 
 def test_persist_completed_run_snapshot_overwrites_waiting_tasks() -> None:
     session_state: dict[str, object] = {
-        "last_tasks": [Task(pid="1", original_link="https://example.com", state=TaskState.WAITING)],
+        "last_tasks": [
+            Task(pid="1", original_link="https://example.com", state=TaskState.WAITING)
+        ],
         "last_app_mode": "旧模式",
         "last_default_user_prompt": "旧 prompt",
         "last_output_format": "json",
@@ -76,3 +78,29 @@ def test_persist_completed_run_snapshot_overwrites_waiting_tasks() -> None:
     assert session_state["last_app_mode"] == controller.app_mode_value
     assert session_state["last_default_user_prompt"] == controller.default_user_prompt
     assert session_state["last_output_format"] == controller.output_format
+
+
+def test_persist_completed_run_snapshot_keeps_translation_compliance_runtime_values() -> (
+    None
+):
+    session_state: dict[str, object] = {}
+    controller = RunController(
+        tasks=[
+            Task(
+                pid="1", original_link="https://example.com", state=TaskState.COMPLETED
+            )
+        ],
+        show_category=False,
+        is_duration_mode=False,
+        app_mode_value="翻译合规判断",
+        default_user_prompt="合规模板",
+        output_format="json",
+        running=False,
+        finished=True,
+    )
+
+    _persist_completed_run_snapshot(controller, session_state)
+
+    assert session_state["last_app_mode"] == "翻译合规判断"
+    assert session_state["last_default_user_prompt"] == "合规模板"
+    assert session_state["last_output_format"] == "json"

@@ -41,16 +41,31 @@ class CacheStore:
             columns = {str(row[1]) for row in await cursor.fetchall()}
             await cursor.close()
             if "model_output" not in columns:
-                await db.execute("ALTER TABLE cache ADD COLUMN model_output TEXT NOT NULL DEFAULT ''")
+                await db.execute(
+                    "ALTER TABLE cache ADD COLUMN model_output TEXT NOT NULL DEFAULT ''"
+                )
             if "gemini_output" in columns:
-                await db.execute("UPDATE cache SET model_output = gemini_output WHERE model_output = ''")
+                await db.execute(
+                    "UPDATE cache SET model_output = gemini_output WHERE model_output = ''"
+                )
             if "can_translate" not in columns:
-                await db.execute("ALTER TABLE cache ADD COLUMN can_translate TEXT NOT NULL DEFAULT ''")
+                await db.execute(
+                    "ALTER TABLE cache ADD COLUMN can_translate TEXT NOT NULL DEFAULT ''"
+                )
             await db.execute(
                 """
                 CREATE TABLE IF NOT EXISTS system_prompt (
                     id INTEGER PRIMARY KEY CHECK (id = 1),
                     content TEXT NOT NULL DEFAULT '',
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
+            await db.execute(
+                """
+                CREATE TABLE IF NOT EXISTS app_settings (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL DEFAULT '',
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
                 """
@@ -65,7 +80,9 @@ class CacheStore:
     def hash_prompt(prompt: str) -> str:
         return hashlib.sha256(prompt.strip().encode("utf-8")).hexdigest()
 
-    async def get_cached_result(self, link_hash: str, prompt_hash: str) -> CachedResult | None:
+    async def get_cached_result(
+        self, link_hash: str, prompt_hash: str
+    ) -> CachedResult | None:
         async with aiosqlite.connect(self.db_path) as db:
             cursor = await db.execute(
                 """
@@ -115,7 +132,15 @@ class CacheStore:
                     fps_used = excluded.fps_used,
                     updated_at = CURRENT_TIMESTAMP
                 """,
-                (link_hash, prompt_hash, aweme_id, video_url, model_output, can_translate, fps_used),
+                (
+                    link_hash,
+                    prompt_hash,
+                    aweme_id,
+                    video_url,
+                    model_output,
+                    can_translate,
+                    fps_used,
+                ),
             )
             await db.commit()
 
@@ -135,6 +160,31 @@ class CacheStore:
     async def load_system_prompt(self) -> str | None:
         async with aiosqlite.connect(self.db_path) as db:
             cursor = await db.execute("SELECT content FROM system_prompt WHERE id = 1")
+            row = await cursor.fetchone()
+            await cursor.close()
+        if row is None:
+            return None
+        return str(row[0])
+
+    async def save_setting(self, key: str, value: str) -> None:
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute(
+                """
+                INSERT INTO app_settings (key, value)
+                VALUES (?, ?)
+                ON CONFLICT(key)
+                DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP
+                """,
+                (key, value),
+            )
+            await db.commit()
+
+    async def load_setting(self, key: str) -> str | None:
+        async with aiosqlite.connect(self.db_path) as db:
+            cursor = await db.execute(
+                "SELECT value FROM app_settings WHERE key = ?",
+                (key,),
+            )
             row = await cursor.fetchone()
             await cursor.close()
         if row is None:

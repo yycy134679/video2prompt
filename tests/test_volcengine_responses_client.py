@@ -48,11 +48,16 @@ def test_interpret_video_builds_responses_video_url_payload() -> None:
                 max_output_tokens=512,
                 http_client=http_client,
             )
-            result = await client.interpret_video("https://example.com/video.mp4", "请分析", 1.5)
+            result = await client.interpret_video(
+                "https://example.com/video.mp4", "请分析", 1.5
+            )
             return result, client.consume_last_observation()
 
     result, observation = asyncio.run(_run())
-    assert payloads[0]["input"][0]["content"][0]["video_url"] == "https://example.com/video.mp4"
+    assert (
+        payloads[0]["input"][0]["content"][0]["video_url"]
+        == "https://example.com/video.mp4"
+    )
     assert payloads[0]["input"][0]["content"][0]["fps"] == 1.5
     assert payloads[0]["max_output_tokens"] == 512
     assert result == ("ok", 1.5)
@@ -185,3 +190,20 @@ def test_create_response_with_file_id_retryable() -> None:
 
     with pytest.raises(ModelRetryableError):
         asyncio.run(_run())
+
+
+def test_client_uses_default_prompt_when_runtime_prompt_empty() -> None:
+    client = VolcengineResponsesClient(
+        base_url="https://ark.cn-beijing.volces.com/api/v3",
+        endpoint_id="ep-test",
+        api_key="k",
+    )
+    client.set_default_user_prompt("fallback")
+
+    payload = client._build_video_url_input(
+        video_url="https://example.com/video.mp4",
+        prompt="",
+        fps=1.0,
+    )
+
+    assert payload[0]["content"][1]["text"] == "fallback"
