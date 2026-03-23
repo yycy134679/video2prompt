@@ -9,44 +9,43 @@
 ![Pytest](https://img.shields.io/badge/Test-pytest-0A9EDC?style=flat-square&logo=pytest&logoColor=white)
 ![SQLite](https://img.shields.io/badge/Cache-SQLite-003B57?style=flat-square&logo=sqlite&logoColor=white)
 
-[功能亮点](#功能亮点) • [快速开始](#快速开始) • [运行模式](#运行模式) • [配置说明](#配置说明) • [开发与测试](#开发与测试) • [故障排查](#故障排查)
+[功能亮点](#功能亮点) • [快速开始](#快速开始) • [运行模式](#运行模式) • [配置说明](#配置说明) • [macOS 打包](#macos-打包) • [开发](#开发) • [故障排查](#故障排查)
 
 </div>
 
-`video2prompt` 用来批量处理抖音链接：先通过内嵌抖音解析模块拿到视频直链，再按所选模式执行 AI 解读或 `ffprobe` 时长探测，最后导出 Excel 或 Markdown ZIP。
+`video2prompt` 是一个本地运行的 Streamlit 应用，用来批量处理抖音视频链接。它会先从抖音页面解析出可访问的视频地址，再通过火山方舟 Responses / Files API 做视频解读；同时也支持基于 `ffprobe` 的时长检测模式，并将结果导出为 Excel 或 Markdown ZIP。
 
 它适合这些场景：
 
-- 批量生成短视频复刻提示词
+- 批量生成视频复刻提示词
 - 审查视频是否适合翻译搬运
-- 按类目沉淀脚本素材
-- 快速筛掉时长超过 15 秒的视频
+- 按类目沉淀素材
+- 快速筛掉超过 15 秒的视频
 
 > [!IMPORTANT]
-> `scripts/start.sh` 不会自动激活虚拟环境。请先执行 `. .venv/bin/activate`，再启动应用。
+> 当前项目只支持抖音视频链接，不支持 TikTok 链接，也不支持抖音图集。
 
 ## 功能亮点
 
-- 批量输入 `pid + 链接`，自动解析无水印视频直链并执行后续流程
-- 内嵌 Douyin-only 解析，不再依赖额外 HTTP 解析服务
-- 支持手动粘贴并持久化抖音 Cookie，重启应用后仍可继续使用
-- 仅保留 `火山方舟（Volcengine / Seed）Responses API + Files API` 单一路径
-- 内置四种运行模式：`视频复刻提示词`、`翻译合规判断`、`按类目分析`、`视频时长判断`
-- 支持结构化“能否翻译”审查，覆盖儿童口播、多人口播、价格促销、字幕、贴纸/花字等维度
-- 本地 SQLite 缓存，避免相同链接 + Prompt 重复调用模型
-- 带重试、退避、熔断、限流慢启动和手动停止能力
-- 支持 Excel 导出，按类目模式还可导出 Markdown ZIP
-- Excel 导出结果可直接用于下游整理，默认模板位于 `docs/product_prompt_template.xlsx`
+- 支持批量输入 `pid + 链接`，按类目模式额外支持类目字段
+- 内置抖音解析流程，不依赖额外解析服务
+- 支持手动粘贴抖音 Cookie，并在本地持久化保存
+- 仅保留火山方舟 Responses API / Files API 路径
+- 内置四种运行模式：复刻提示词、翻译合规判断、按类目分析、视频时长判断
+- 本地 SQLite 缓存，避免相同 `link + prompt` 重复调用模型
+- 内置重试、退避、熔断、节奏控制和手动停止能力
+- 所有模式支持 Excel 导出，按类目模式额外支持 Markdown ZIP
+- 支持通过 `PyInstaller` 打包 macOS 桌面应用
 
-## 工作流
+## 工作流程
 
 ```mermaid
 flowchart LR
-  A["批量输入<br/>pid / link / category"] --> B["手动配置 Cookie"]
-  B --> C["内嵌抖音解析<br/>获取视频直链"]
+  A["批量输入<br/>pid / link / category"] --> B["粘贴抖音 Cookie"]
+  B --> C["从抖音页面解析<br/>视频地址"]
   C --> D{"运行模式"}
   D --> E["火山方舟 Responses / Files<br/>视频解读"]
-  D --> F["ffprobe<br/>时长探测"]
+  D --> F["ffprobe<br/>时长检测"]
   E --> G["SQLite 缓存"]
   E --> H["Excel 导出"]
   E --> I["Markdown ZIP 导出"]
@@ -55,19 +54,17 @@ flowchart LR
 
 ## 快速开始
 
-### 1. 准备环境
-
-前置条件：
+### 依赖准备
 
 - Python `3.11+`
-- 可用的抖音网页 Cookie（首次启动后在页面内手动粘贴保存）
-- 如果要使用“视频时长判断”模式，需要 `ffprobe`
-- 如果要使用 AI 解读模式，需要 `VOLCENGINE_API_KEY` 或 `ARK_API_KEY`
+- 可用的抖音网页 Cookie
+- 如果要从源码运行视频时长判断模式，需要让 `ffprobe` 出现在 `PATH` 中
+- 如果要使用 AI 解读模式，需要配置 `VOLCENGINE_API_KEY` 或 `ARK_API_KEY`
 
 > [!NOTE]
-> “视频时长判断”模式不会调用模型，因此不需要 AI API Key，但仍然需要已配置的抖音 Cookie。
+> 视频时长判断模式不会调用模型，因此不需要 API Key，但仍然需要有效的抖音 Cookie。
 
-### 2. 创建虚拟环境并安装依赖
+### 1. 创建虚拟环境
 
 ```bash
 python3 -m venv .venv
@@ -77,24 +74,24 @@ python -m pip install --upgrade pip setuptools wheel
 python -m pip install -e ".[dev]"
 ```
 
-### 3. 配置环境变量
+### 2. 创建 `.env`
 
 ```bash
 cp .env.example .env
 ```
 
-`.env` 中填写：
+在 `.env` 中填写任意一个可用密钥：
 
 ```env
 VOLCENGINE_API_KEY=your_volcengine_api_key_here
 ARK_API_KEY=your_ark_api_key_here
 ```
 
-### 4. 检查 `config.yaml`
+### 3. 检查 `config.yaml`
 
-项目默认通过 `config.yaml` 控制火山模型参数、并发、重试、熔断、缓存和日志路径。
+应用从 `config.yaml` 读取运行时配置，包括火山方舟参数、解析并发、重试限制、熔断、缓存和日志。
 
-推荐配置示例：
+最小示例：
 
 ```yaml
 volcengine:
@@ -104,79 +101,60 @@ volcengine:
   video_fps: 2.0
   thinking_type: "enabled"
   reasoning_effort: "high"
-  max_output_tokens: null
   input_mode: "auto"
-  video_url_size_limit_mb: 50
-  files_video_size_limit_mb: 512
-  files_poll_timeout_seconds: 180
   stream: true
 ```
 
 > [!IMPORTANT]
-> `volcengine.endpoint_id` 必填。`input_mode=auto` 时，小于等于 `50MB` 的公网视频优先走 `video_url`，更大或直链访问失败时自动回退 `Files API + file_id`。
+> `volcengine.endpoint_id` 为必填项。
 
-### 5. 启动应用
+### 4. 启动应用
 
 ```bash
 . .venv/bin/activate
 bash scripts/start.sh
 ```
 
-如果你更习惯直接运行 Streamlit：
+或者直接运行 Streamlit：
 
 ```bash
 . .venv/bin/activate
 python -m streamlit run app.py --server.headless=false
 ```
 
-启动后浏览器会打开本地页面。请先在“抖音 Cookie 配置”区域粘贴并保存 Cookie，再开始执行任务。
+启动后，浏览器会打开本地页面。先在界面里粘贴并保存抖音 Cookie，然后再执行任务。
 
 > [!IMPORTANT]
-> 当前版本只支持抖音视频，不支持 TikTok 链接，也不支持抖音图集。
+> `scripts/start.sh` 不会自动激活 `.venv`，请先手动激活虚拟环境。
 
 ## 运行模式
 
-| 模式 | 输入 | 是否调用模型 | 主要输出 |
+| 模式 | 输入 | 是否调用模型 | 输出 |
 | --- | --- | --- | --- |
 | 视频复刻提示词 | `pid + 链接` | 是 | 单个 Excel |
 | 翻译合规判断 | `pid + 链接` | 是 | 单个 Excel |
-| 按类目分析 | `pid + 链接 + 类目` | 是 | Excel + 按类目 Markdown ZIP |
-| 视频时长判断 | `pid + 链接` | 否 | 两个 Excel：`<=15s`、`>15s/探测失败` |
+| 按类目分析 | `pid + 链接 + 类目` | 是 | Excel + Markdown ZIP |
+| 视频时长判断 | `pid + 链接` | 否 | 两个 Excel |
 
 ### AI 解读模式
 
-`视频复刻提示词` 和 `按类目分析` 默认包含两种输出格式：
+`视频复刻提示词` 和 `按类目分析` 支持两种输出格式：
 
 - `纯文本`：保留模型原始输出
-- `JSON`：按内置规则解析为“能否翻译 + 信息摘要”
+- `JSON`：解析为结构化审查字段
 
-`翻译合规判断` 模式固定使用 `JSON` 输出，不提供纯文本切换。
+`翻译合规判断` 固定使用 `JSON` 输出。
 
-### 翻译合规判断模式
+### 提示词行为
 
-- 默认加载 `docs/视频内容审查.md` 作为提示词模板
-- 仍然显示提示词编辑框，可在模板基础上继续修改
-- 运行前若提示词被清空，会自动回退到当前模式默认模板
-- 保存提示词时按模式隔离，不会覆盖普通复刻模式的提示词设置
+- `翻译合规判断` 默认使用 `docs/视频内容审查.md` 作为提示词模板
+- `视频复刻提示词` 和 `按类目分析` 共用 `docs/视频复刻提示词.md`
+- 提示词会按模式持久化到 SQLite，并在下次启动时恢复
+- 普通模式的输出格式也会持久化并恢复
 
-### 普通提示词模式
+### 运行时覆盖
 
-- `视频复刻提示词` 与 `按类目分析` 共用普通模式提示词
-- 普通模式默认模板来自 `docs/视频复刻提示词.md`
-- 普通模式的输出格式选择会单独持久化，下次进入页面可恢复
-
-结构化审查会重点判断：
-
-- 儿童口播
-- 多人口播 / 声音切换
-- 明确价格或促销
-- 字幕
-- 贴纸 / 花字
-- 其他中文字符
-
-### 运行时配置覆盖
-
-页面支持调整部分高频参数，且**只对本次运行生效**，不会写回 `config.yaml`，例如：
+界面可以临时覆盖一些高频参数，仅对当前运行生效，例如：
 
 - `parser.concurrency`
 - `volcengine.video_fps`
@@ -184,112 +162,48 @@ python -m streamlit run app.py --server.headless=false
 - `volcengine.reasoning_effort`
 - 输出格式
 
-高级参数如退避、熔断、文件轮询超时、完成后等待时间，仍建议直接修改 `config.yaml`。
+这些临时修改不会写回 `config.yaml`。
 
 ## 配置说明
 
 ### 环境变量
 
-| 变量名 | 用途 |
+| 变量 | 用途 |
 | --- | --- |
-| `VOLCENGINE_API_KEY` | 火山方舟模式使用 |
-| `ARK_API_KEY` | 火山方舟 API Key 兼容变量 |
+| `VOLCENGINE_API_KEY` | 主 API Key |
+| `ARK_API_KEY` | 兼容的备用 API Key |
 
 ### 关键配置项
 
 | 配置项 | 说明 |
 | --- | --- |
-| `volcengine.endpoint_id` | 火山方舟推理接入点 ID |
-| `volcengine.input_mode` | 输入模式，支持 `auto` / `video_url` / `file_id` |
-| `volcengine.stream` | 是否启用流式 Responses 聚合 |
-| `parser.base_url` | 兼容保留字段，当前版本读取但忽略 |
-| `parser.concurrency` | 解析并发，范围 `1-50` |
-| `retry.*` | 解析 / 模型退避序列与退避上限 |
-| `circuit_breaker.*` | 解析与模型的熔断阈值 |
-| `cache.db_path` | SQLite 缓存文件，默认 `data/cache.db` |
-| `logging.file_path` | 日志文件路径，默认 `logs/app.log` |
+| `volcengine.endpoint_id` | 必填的火山方舟 endpoint ID |
+| `volcengine.input_mode` | 只支持 `auto`、`video_url`、`file_id` |
+| `volcengine.video_fps` | 范围必须在 `0.2-5` |
+| `volcengine.files_expire_days` | 范围必须在 `1-30` |
+| `parser.concurrency` | 范围必须在 `1-50` |
+| `retry.*_cap_seconds` | 必须 `>0` 且 `<=30` |
+| `cache.db_path` | 从源码运行时默认是 `data/cache.db` |
+| `logging.file_path` | 从源码运行时默认是 `logs/app.log` |
 
-### 缓存与导出
+### 运行产物
 
-- 缓存键基于 `SHA-256(link) + SHA-256(prompt)`
-- Prompt 会按模式持久化到 SQLite，下次打开页面可直接恢复
-- 普通模式输出格式会持久化到 SQLite，下次打开页面可直接恢复
-- Cookie 会持久化到 `~/Library/Application Support/video2prompt/user_state.yaml`
-- 导出文件默认写入 `exports/`
-- 日志默认写入 `logs/app.log`
-- 缓存数据库默认写入 `data/cache.db`
+从源码运行时，默认产物位置如下：
 
-## 项目结构
+- 缓存数据库：`data/cache.db`
+- 日志：`logs/app.log`
+- 导出目录：`exports/`
+- 上次运行快照：`exports/last_run_result.json`
+- Cookie 持久化：`~/Library/Application Support/video2prompt/user_state.yaml`
 
-```text
-video2prompt/
-├── app.py
-├── config.yaml
-├── .env.example
-├── scripts/
-│   └── start.sh
-├── src/video2prompt/
-│   ├── config.py
-│   ├── task_scheduler.py
-│   ├── duration_check_runner.py
-│   ├── parser_client.py
-│   ├── volcengine_responses_client.py
-│   ├── volcengine_files_client.py
-│   ├── cache_store.py
-│   ├── review_result.py
-│   ├── excel_exporter.py
-│   ├── markdown_exporter.py
-│   └── ...
-├── tests/
-├── docs/
-│   └── product_prompt_template.xlsx
-└── exports/
-```
+## macOS 打包
 
-## 开发与测试
+当前分发目标是本地 macOS 应用包加 ZIP：
 
-运行全量测试：
+- `dist/video2prompt.app`
+- `dist/video2prompt-macos.zip`
 
-```bash
-. .venv/bin/activate
-python -m pytest
-```
-
-运行单个测试文件：
-
-```bash
-. .venv/bin/activate
-python -m pytest tests/test_config.py
-python -m pytest tests/test_task_scheduler_output_format.py -k json
-```
-
-> [!TIP]
-> 当前仓库没有独立的 `ruff`、`black`、`mypy` 配置。修改后至少应跑相关 `pytest`，尤其是配置、调度器、导出器和客户端测试。
-
-开发时建议优先关注这些模块：
-
-- `app.py`：UI、运行控制、导出入口
-- `src/video2prompt/task_scheduler.py`：主调度链路
-- `src/video2prompt/duration_check_runner.py`：时长判断
-- `src/video2prompt/review_result.py`：JSON 输出解析与纠偏
-- `src/video2prompt/excel_exporter.py`：Excel 模板写入规则
-
-## macOS App 打包
-
-第一期 macOS 分发目标是 `video2prompt.app + zip`：
-
-- 使用 `PyInstaller` 生成 `dist/video2prompt.app`
-- 再打成 `dist/video2prompt-macos.zip`
-- 应用首次启动会在 `~/Library/Application Support/video2prompt/` 下生成：
-  - `config.yaml`
-  - `.env`
-  - `data/`
-  - `logs/`
-  - `exports/`
-- AI 模式需要在上述 `.env` 中填写 `VOLCENGINE_API_KEY` 或 `ARK_API_KEY`
-- “视频时长判断”模式依赖内置 `ffprobe`
-
-构建前准备：
+打包前准备：
 
 ```bash
 . .venv/bin/activate
@@ -297,69 +211,115 @@ python -m pip install pyinstaller
 chmod +x packaging/bin/ffprobe
 ```
 
-运行构建：
+执行打包：
 
 ```bash
 bash scripts/build_macos_app.sh
 ```
 
-当前构建脚本会检查：
+打包后的应用首次启动时，会在 `~/Library/Application Support/video2prompt/` 下初始化可写文件，包括：
 
-- `app.py`、`config.yaml`、`.env.example`、`docs/` 模板资源是否存在
-- `packaging/bin/ffprobe` 是否存在、可执行、可输出版本信息
-- `PyInstaller` 是否已安装
+- `config.yaml`
+- `.env`
+- `data/`
+- `logs/`
+- `exports/`
 
 > [!IMPORTANT]
-> 当前仓库不会自动提供 `packaging/bin/ffprobe`。构建前请先放入可分发的 macOS `ffprobe` 二进制，或补齐它依赖的 `.dylib`。
+> 构建需要在 `packaging/bin/ffprobe` 放置一个可分发的 macOS `ffprobe` 二进制。
 
 > [!IMPORTANT]
-> 第一阶段产物默认未签名、未公证。运营同事首次打开时，可能需要右键 `video2prompt.app` 选择“打开”，或在“系统设置 -> 隐私与安全性”里允许该应用运行。
+> 当前生成的 macOS 应用尚未签名，也没有做 notarization。
 
 > [!NOTE]
-> 未配置 API Key 时，应用仍可启动；但只有配置好 `.env` 后，AI 模式才会真正调用模型。
+> 打包后的应用可以在没有 API Key 的情况下启动；只有真正发起 AI 请求时才会校验密钥。
 
-## 故障排查
+## 开发
 
-### 启动时报“依赖未安装”
+### 项目结构
 
-通常是因为没有先激活 `.venv`。
+```text
+video2prompt/
+├── app.py
+├── config.yaml
+├── .env.example
+├── scripts/
+│   ├── start.sh
+│   └── build_macos_app.sh
+├── packaging/
+│   ├── video2prompt-macos.spec
+│   └── bin/
+│       └── ffprobe
+├── src/video2prompt/
+├── tests/
+└── docs/
+```
+
+### 运行测试
+
+全量测试：
 
 ```bash
 . .venv/bin/activate
-bash scripts/start.sh
+python -m pytest
 ```
 
-### 启动时报“未找到 .env”
+常用定向测试：
 
-先复制模板并填写 Key：
+```bash
+. .venv/bin/activate
+python -m pytest tests/test_config.py
+python -m pytest tests/test_task_scheduler_output_format.py -k json
+python -m pytest tests/test_task_scheduler_volcengine_retry.py
+python -m pytest tests/test_markdown_exporter.py
+python -m pytest tests/test_duration_check_runner.py
+```
+
+### 开发说明
+
+- 这是一个单包 Python 项目，不是 monorepo
+- UI 入口是 `app.py`，但大部分业务逻辑应放在 `src/video2prompt/` 下
+- 仓库当前没有独立的 `ruff`、`black`、`mypy` 配置
+- 修改调度器、配置、导出器、解析/模型客户端或 UI 状态流时，要同步更新对应测试
+
+## 故障排查
+
+### `依赖未安装，请先执行: pip install -e .`
+
+通常表示虚拟环境未激活，或依赖尚未安装。
+
+```bash
+. .venv/bin/activate
+python -m pip install -e ".[dev]"
+```
+
+### `未找到 .env`
+
+从示例文件复制即可：
 
 ```bash
 cp .env.example .env
 ```
 
-### 时长判断模式失败，提示 `ffprobe`
+### 视频时长判断模式提示 `ffprobe` 错误
 
-系统缺少 `ffprobe`。macOS 可使用：
+说明系统缺少 `ffprobe`，或者它不在 `PATH` 中。
 
 ```bash
 brew install ffmpeg
 ```
 
-### 页面提示未配置 Cookie
+### 抖音解析失败
 
-先在页面的“抖音 Cookie 配置”区域粘贴并保存浏览器 Cookie。
-
-### 页面提示 Cookie 可能失效
-
-重新从浏览器复制最新 Cookie，再点击“保存 Cookie”。如果抖音网页要求验证码或二次验证，也需要先在浏览器里完成验证。
+最常见原因是 Cookie 过期。请从已登录的浏览器页面重新复制 Cookie，并在界面中重新保存。
 
 ### 导出失败
 
 优先检查：
 
-- `docs/product_prompt_template.xlsx` 是否存在
-- `exports/` 目录是否可写
-- 当前任务是否已有可导出的完成结果
+- `docs/product_prompt_template.xlsx` 存在且可读
+- `exports/` 可写
+- 当前运行已经完成，并产出了可导出的结果
 
 ## 相关文档
 

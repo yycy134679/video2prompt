@@ -15,7 +15,7 @@ if ! python3 -c "import streamlit" >/dev/null 2>&1; then
 fi
 
 if [ ! -f ".env" ]; then
-  echo "未找到 .env，请复制 .env.example 并填写 GEMINI_API_KEY"
+  echo "未找到 .env，请复制 .env.example 并填写 VOLCENGINE_API_KEY 或 ARK_API_KEY"
   exit 1
 fi
 
