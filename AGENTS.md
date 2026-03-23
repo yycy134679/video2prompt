@@ -1,50 +1,57 @@
 # AGENTS.md
 
-## 项目概览
+## Project Overview
 
-`video2prompt` 是一个本地运行的 Streamlit 工具，用于批量处理抖音视频链接，并执行以下流程：
+`video2prompt` is a single-package Python project for locally processing Douyin video links in bulk.
+It provides a Streamlit UI that:
 
-- 解析抖音页面，获取可访问的视频直链
-- 调用火山方舟 Responses API / Files API 做视频解读
-- 在“视频时长判断”模式下使用 `ffprobe` 探测时长
-- 导出 Excel，按类目模式额外导出 Markdown ZIP
+- parses Douyin pages and resolves accessible video URLs
+- runs Volcengine Ark Responses API / Files API based video analysis
+- supports a duration-check mode powered by `ffprobe`
+- exports Excel results and, for category mode, Markdown ZIP bundles
 
-仓库是单包 Python 项目，不是 monorepo。UI 入口在 `app.py`，核心逻辑在 `src/video2prompt/`，测试在 `tests/`。
+This repository is not a monorepo. The main UI entry is `app.py`, application code lives in `src/video2prompt/`, and tests live in `tests/`.
 
-## 代理执行准则
+## Architecture Overview
 
-- 默认使用简体中文回复、注释、文档和提交信息。
-- 先基于事实工作。修改前先读相关实现和对应测试，不要凭猜测下结论。
-- 优先保持 KISS、YAGNI、DRY 和单一职责，不要把业务逻辑继续堆进 `app.py`。
-- 如果需求不够明确，先澄清；如果准备动手实现，先给出简短方案再改代码。
-- 评估为超过 3 个文件的改动时，先拆成更小的任务单元，再逐步实施。
-- 修复 Bug 时先补能复现问题的测试，再写修复代码。
-- 改完后补一段简短分析：说明改动影响、潜在风险，以及建议补跑的测试。
-- 若改动影响核心流程、配置方式、导出格式或开发流程，同步更新 `README.md`。
-- 做文档任务也尽量使用真实命令验证，不要照抄经验性说法。
+- `app.py`: Streamlit UI composition, session state, run control, export entry points
+- `src/video2prompt/config.py`: load, merge, and validate `.env` + `config.yaml`
+- `src/video2prompt/task_scheduler.py`: main AI execution pipeline, retries, pacing, circuit breaking, caching
+- `src/video2prompt/duration_check_runner.py`: duration-check mode using `ffprobe`
+- `src/video2prompt/parser_client.py`: Douyin parsing client
+- `src/video2prompt/volcengine_responses_client.py`: Volcengine Responses API client
+- `src/video2prompt/volcengine_files_client.py`: Volcengine Files API upload and polling
+- `src/video2prompt/review_result.py`: structured review result parsing and normalization
+- `src/video2prompt/excel_exporter.py`: Excel export using `docs/product_prompt_template.xlsx`
+- `src/video2prompt/markdown_exporter.py`: category Markdown export and ZIP packaging
+- `src/video2prompt/cache_store.py`: SQLite cache and prompt persistence
+- `src/video2prompt/runtime_paths.py`: runtime path resolution for dev and packaged app modes
+- `src/video2prompt/desktop_entry.py`: packaged macOS app entrypoint
 
-## 仓库结构
+## Repository Layout
 
-- `app.py`：Streamlit 页面、运行控制、导出入口、会话状态。
-- `config.yaml`：业务配置，包含火山模型、解析并发、重试、熔断、缓存、日志。
-- `.env.example`：环境变量模板，实际运行前复制为 `.env`。
-- `scripts/start.sh`：启动脚本，要求依赖已安装且 `.env` 已存在。
-- `src/video2prompt/config.py`：`.env` + `config.yaml` 加载、合并与校验。
-- `src/video2prompt/task_scheduler.py`：AI 解读主调度器，负责解析、缓存、重试、熔断、节奏控制。
-- `src/video2prompt/duration_check_runner.py`：时长判断模式，依赖 `ffprobe`。
-- `src/video2prompt/volcengine_responses_client.py`：火山 Responses API 调用。
-- `src/video2prompt/volcengine_files_client.py`：火山 Files API 上传与轮询。
-- `src/video2prompt/review_result.py`：JSON 输出解析和“能否翻译”规则收敛。
-- `src/video2prompt/excel_exporter.py`：基于 `docs/product_prompt_template.xlsx` 导出 Excel。
-- `src/video2prompt/markdown_exporter.py`：按类目导出 Markdown 并打 ZIP。
-- `src/video2prompt/cache_store.py`：SQLite 缓存与系统提示词持久化。
-- `tests/`：pytest 测试，按模块拆分。
-- `docs/`：需求说明、规则说明和 Excel 模板文件。
-- `exports/`、`data/`、`logs/`：运行产物目录，默认不提交。
+```text
+video2prompt/
+├── app.py
+├── config.yaml
+├── .env.example
+├── README.md
+├── scripts/
+│   ├── start.sh
+│   └── build_macos_app.sh
+├── packaging/
+│   ├── video2prompt-macos.spec
+│   └── bin/
+│       └── ffprobe
+├── src/video2prompt/
+├── tests/
+├── docs/
+└── exports/
+```
 
-## 环境准备
+## Setup Commands
 
-推荐在仓库根目录执行：
+Create and prepare a virtual environment from the repository root:
 
 ```bash
 python3 -m venv .venv
@@ -54,50 +61,63 @@ python -m pip install --upgrade pip setuptools wheel
 python -m pip install -e ".[dev]"
 ```
 
-运行前还需要：
+Create local environment variables:
 
-- 复制环境变量模板：`cp .env.example .env`
-- 在 `.env` 中填写 `VOLCENGINE_API_KEY` 或 `ARK_API_KEY`
-- 准备可用的抖音网页 Cookie，并在页面中手动粘贴保存
-- 若使用“视频时长判断”模式，确保 `ffprobe` 在 `PATH` 中
+```bash
+cp .env.example .env
+```
 
-## 常用开发命令
+Set one of the following in `.env` before using AI analysis modes:
 
-激活虚拟环境：
+```env
+VOLCENGINE_API_KEY=your_key_here
+ARK_API_KEY=your_key_here
+```
+
+Additional local requirements:
+
+- provide a valid Douyin web cookie and paste it into the UI
+- ensure `ffprobe` is available in `PATH` for duration-check mode when running from source
+- for macOS packaging, place a distributable `ffprobe` binary at `packaging/bin/ffprobe`
+
+## Development Workflow
+
+Activate the virtual environment before running project commands:
 
 ```bash
 . .venv/bin/activate
 ```
 
-启动应用：
+Start the app with the project script:
 
 ```bash
 bash scripts/start.sh
 ```
 
-直接运行 Streamlit：
+Or run Streamlit directly:
 
 ```bash
 . .venv/bin/activate
 python -m streamlit run app.py --server.headless=false
 ```
 
-注意事项：
+Important runtime facts:
 
-- `scripts/start.sh` 不会自动激活 `.venv`，先手动激活再执行。
-- 启动脚本只检查 `.env` 是否存在，不会帮你补全密钥。
-- 当前项目只支持抖音视频，不支持 TikTok 链接，也不支持抖音图集。
+- `scripts/start.sh` does not activate `.venv` for you
+- `scripts/start.sh` only checks whether `.env` exists; it does not populate secrets
+- the current product scope is Douyin video links only; no TikTok support and no Douyin image-post support
+- packaged macOS builds initialize user-writable files under `~/Library/Application Support/video2prompt/`
 
-## 测试说明
+## Testing Instructions
 
-全量测试：
+Run the full test suite:
 
 ```bash
 . .venv/bin/activate
 python -m pytest
 ```
 
-常用子集：
+Run focused tests for common areas:
 
 ```bash
 . .venv/bin/activate
@@ -108,114 +128,166 @@ python -m pytest tests/test_markdown_exporter.py
 python -m pytest tests/test_duration_check_runner.py
 ```
 
-测试约定：
+Test conventions and expectations:
 
-- 测试框架是 `pytest`，配置在 `pyproject.toml`。
+- test framework: `pytest`
+- pytest config lives in `pyproject.toml`
 - `testpaths = ["tests"]`
-- `pytest-asyncio` 使用 `asyncio_mode = "auto"`。
-- 修改调度器、配置、导出器、解析/模型客户端时，必须补对应测试。
-- 新增纯逻辑模块时优先写单元测试，不要只靠手工点页面。
-- 改动 UI 交互状态时，同时检查 `tests/test_app_cookie_state.py` 和 `tests/test_app_run_controller_state.py` 是否需要更新。
+- `pytest-asyncio` runs with `asyncio_mode = "auto"`
+- when modifying scheduler, config, exporters, parser/model clients, add or update tests in the corresponding area
+- when fixing a bug, write or update a failing test first, then implement the fix
+- when changing UI state behavior, review both `tests/test_app_cookie_state.py` and `tests/test_app_run_controller_state.py`
+- new logic-heavy modules should get unit tests; do not rely only on manual Streamlit clicking
 
-## 代码风格与实现边界
+## Code Style And Implementation Boundaries
 
-- 保持 Python 3.11+ 兼容写法，延续当前项目的类型注解、`dataclass` 和小模块拆分。
-- docstring、注释、用户可见文案默认使用简体中文。
-- 导入顺序遵循“标准库 / 第三方 / 本地模块”。
-- 除非文件本身已大量使用中文源码或确有必要，否则尽量保持源码 ASCII。
-- `app.py` 负责 UI 编排；配置、调度、导出、客户端逻辑应下沉到 `src/video2prompt/`。
-- 不要无理由引入新的框架、状态管理层、任务队列或 ORM。
-- 当前仓库没有独立的 `ruff`、`black`、`mypy` 配置，不要假设存在自动格式化或静态检查流水线。
-- 修改导出格式时，必须检查 `docs/product_prompt_template.xlsx` 兼容性，并同步更新导出测试。
+- Target Python `3.11+`
+- Follow existing type hints, `dataclass`, and small-module patterns
+- Default to Simplified Chinese for user-facing copy, comments, docs, and commit messages
+- Keep source files ASCII unless a file already uses non-ASCII heavily or Unicode is clearly justified
+- Maintain import grouping as: standard library / third-party / local modules
+- Keep `app.py` focused on UI orchestration; move config, scheduling, export, client, and runtime logic into `src/video2prompt/`
+- Prefer simple, local changes over introducing new frameworks, ORMs, queues, or state layers
+- There is no dedicated `ruff`, `black`, or `mypy` config in this repository; do not assume formatter or type-check CI exists
+- When changing export format or template assumptions, verify compatibility with `docs/product_prompt_template.xlsx` and update export tests
 
-## 配置与运行机制
+## Configuration And Runtime Rules
 
-关键配置来源：
+Configuration sources:
 
-- `.env`：只放密钥
-- `config.yaml`：放火山模型、解析、重试、熔断、缓存、日志等运行参数
+- `.env`: secrets only
+- `config.yaml`: runtime behavior, Volcengine settings, parser options, retries, circuit breakers, cache, logging
 
-当前 provider 事实：
+Current provider facts:
 
-- 项目现在只保留火山方舟路径
-- `ConfigManager.get_provider_api_key()` 实际返回 `VOLCENGINE_API_KEY` 或 `ARK_API_KEY`
-- `AppConfig.provider` 固定返回 `volcengine`
+- the project currently supports only the Volcengine path
+- `ConfigManager.get_provider_api_key()` resolves `VOLCENGINE_API_KEY` or `ARK_API_KEY`
+- `AppConfig.provider` is fixed to `volcengine`
 
-关键配置约束：
+Important config constraints:
 
-- `volcengine.endpoint_id` 必填
-- `volcengine.input_mode` 仅支持 `auto` / `video_url` / `file_id`
-- `volcengine.video_fps` 必须在 `0.2-5`
-- `volcengine.files_expire_days` 必须在 `1-30`
-- `parser.concurrency` 必须在 `1-50`
-- `retry.*_cap_seconds` 必须 `>0` 且 `<=30`
-- 日志级别必须是 `DEBUG/INFO/WARNING/ERROR/CRITICAL`
+- `volcengine.endpoint_id` is required
+- `volcengine.input_mode` supports only `auto`, `video_url`, `file_id`
+- `volcengine.video_fps` must be within `0.2-5`
+- `volcengine.files_expire_days` must be within `1-30`
+- `parser.concurrency` must be within `1-50`
+- `retry.*_cap_seconds` must be `>0` and `<=30`
+- log level must be one of `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`
 
-运行产物默认位置：
+Default runtime outputs when running from source:
 
-- SQLite 缓存：`data/cache.db`
-- 日志：`logs/app.log`
-- 导出结果：`exports/`
-- 上次运行结果恢复文件：`exports/last_run_result.json`
-- 用户 Cookie 持久化：`~/Library/Application Support/video2prompt/user_state.yaml`
+- SQLite cache: `data/cache.db`
+- logs: `logs/app.log`
+- exports: `exports/`
+- last run snapshot: `exports/last_run_result.json`
+- persisted UI cookie state: `~/Library/Application Support/video2prompt/user_state.yaml`
 
-## 安全与敏感信息
+Packaged macOS app behavior:
 
-- 不要提交 `.env`、日志、缓存数据库、导出文件。
-- 不要把真实 API Key、Cookie、请求头、文件直链写进测试、文档或截图。
-- 日志虽然做了基础脱敏，但不要依赖脱敏去打印敏感信息。
-- 修改网络客户端时，优先复用现有错误分层，不要绕开 `ConfigError`、`ParserError`、`ModelError` 等异常体系。
+- user-writable config and runtime files live under `~/Library/Application Support/video2prompt/`
+- packaged app startup can succeed without an API key
+- AI analysis calls validate the API key at request time, not during initial app boot
 
-## 调试与排错
+## Build And Packaging
 
-优先排查顺序：
+This project is primarily delivered as a local Streamlit app. There is no current CI/CD pipeline, Dockerfile, or deployment automation.
 
-1. 检查 `.env` 与 `config.yaml`
-2. 查看 `logs/app.log`
-3. 运行对应测试确认是否已有覆盖
-4. 再看 UI 状态和导出产物
+For the first macOS distribution phase, the expected outputs are:
 
-常见问题：
+- `dist/video2prompt.app`
+- `dist/video2prompt-macos.zip`
 
-- `依赖未安装，请先执行: pip install -e .`：通常是没有激活 `.venv` 或依赖未安装。
-- `未找到 .env`：先执行 `cp .env.example .env`。
-- 时长判断失败且提示 `ffprobe`：本机未安装 ffmpeg/ffprobe。
-- 解析失败：优先检查页面中保存的抖音 Cookie 是否过期，必要时重新复制。
-- 导出失败：先确认 `docs/product_prompt_template.xlsx` 存在且未损坏，再检查 `exports/` 是否可写。
+Prepare packaging prerequisites:
 
-## 构建与交付
+```bash
+. .venv/bin/activate
+python -m pip install pyinstaller
+chmod +x packaging/bin/ffprobe
+```
 
-当前仓库主要交付方式是本地运行的 Streamlit 应用，没有现成的 CI/CD、Dockerfile 或部署脚本。
+Build the macOS app:
 
-可接受的交付验证顺序：
+```bash
+bash scripts/build_macos_app.sh
+```
 
-1. 在 `.venv` 中安装 `-e ".[dev]"`
-2. 运行相关 `pytest`
-3. 如改动影响 UI、Cookie 状态或导出，手动启动 `streamlit run app.py`
+Packaging notes:
 
-除非任务明确要求，不要擅自补 Docker、发布流水线或额外部署脚本。
+- the build script validates `app.py`, `config.yaml`, `.env.example`, and required docs assets before building
+- the build script checks that `packaging/bin/ffprobe` exists, is executable, and can report its version
+- the generated macOS app is currently unsigned and not notarized
+- first-time users may need to open the app via Finder context menu or allow it in macOS Security settings
 
-## Git 工作流
+## Security And Sensitive Data
 
-纯文档改动、很小的配置改动、明显低影响且易回滚的小修复，可以直接在 `main` 处理；其余改动默认不要直接改 `main`。
+- never commit `.env`, logs, cache databases, export files, or user state files
+- never place real API keys, cookies, request headers, or direct media URLs in tests, docs, screenshots, or fixtures
+- do not rely on log redaction as a reason to print secrets
+- preserve the existing exception layering such as `ConfigError`, `ParserError`, and `ModelError` when changing network logic
 
-推荐流程：
+## Debugging And Troubleshooting
 
-1. 先确认本地 `main` 已同步最新代码
-2. 从最新 `main` 切工作分支
-3. 分支名使用 `feature/中文描述`、`fix/中文描述`、`refactor/中文描述`、`chore/中文描述`
-4. 在分支上完成修改、测试、自检后，再合并回 `main`
+Preferred debugging order:
 
-提交要求：
+1. inspect `.env` and `config.yaml`
+2. inspect `logs/app.log`
+3. run the relevant tests
+4. inspect UI state and export artifacts
 
-- 提交信息使用中文
-- 遵循约定式提交，例如 `feat: 增加按类目导出 Markdown ZIP`
-- 不要执行 `git reset --hard`、`git checkout -- <file>` 或强制覆盖用户未提交改动，除非用户明确要求
+Common issues:
 
-## 代理工作建议
+- `依赖未安装，请先执行: pip install -e .`: usually `.venv` is not activated or dependencies were not installed
+- `未找到 .env`: create it from `.env.example`
+- duration-check failures mentioning `ffprobe`: local ffmpeg/ffprobe is missing or unavailable
+- parse failures: usually stale Douyin cookie; re-copy the cookie from a logged-in browser session
+- export failures: verify `docs/product_prompt_template.xlsx` exists and `exports/` is writable
 
-- 开始前优先阅读 `app.py`、`src/video2prompt/config.py`、相关模块和对应测试。
-- 搜索优先用 `rg`，不要盲目全仓扫描。
-- 改配置字段、导出列、任务状态、异常文案时，联动检查测试和 README。
-- 如果工作区已有未提交改动，先理解并避开，不要擅自回滚。
-- 文档型任务也尽量用真实命令验证；至少确认命令、路径、模块名与仓库现状一致。
+Known repository quirk:
+
+- `scripts/start.sh` still prints a `GEMINI_API_KEY` hint in one error message, but the actual supported environment variables are `VOLCENGINE_API_KEY` and `ARK_API_KEY`
+
+## Git And Pull Request Guidelines
+
+Branching policy:
+
+- low-risk doc edits, tiny config edits, and clearly local easy-to-revert fixes may be done on `main`
+- all other work should start from an up-to-date `main` on a dedicated branch
+- preferred branch names: `feature/中文描述`, `fix/中文描述`, `refactor/中文描述`, `chore/中文描述`
+
+Commit expectations:
+
+- use Chinese commit messages
+- follow Conventional Commit style, for example `feat: 增加按类目导出 Markdown ZIP`
+- do not use destructive git commands such as `git reset --hard` or `git checkout -- <file>` unless explicitly requested
+
+Before opening or merging a PR:
+
+- run the relevant `pytest` commands for changed areas
+- update `README.md` when the change affects core workflow, configuration, export format, packaging, or development flow
+- keep unrelated local changes untouched
+
+## Agent Working Agreement
+
+When operating in this repository, agents should:
+
+- default to Simplified Chinese responses unless the user asks otherwise
+- work from facts by reading the relevant implementation and tests before changing code
+- keep changes KISS, YAGNI, DRY, and single-responsibility oriented
+- avoid piling more business logic into `app.py`
+- provide a short implementation approach before making non-trivial code changes
+- decompose work when a change is likely to span more than three files
+- verify commands, paths, and module names against the current repository instead of relying on memory
+- prefer `rg`/targeted search over broad blind scanning
+
+## Useful File References
+
+- UI entry: `app.py`
+- main config loader: `src/video2prompt/config.py`
+- scheduler: `src/video2prompt/task_scheduler.py`
+- runtime packaging entry: `src/video2prompt/desktop_entry.py`
+- runtime path logic: `src/video2prompt/runtime_paths.py`
+- packaging spec: `packaging/video2prompt-macos.spec`
+- startup script: `scripts/start.sh`
+- macOS build script: `scripts/build_macos_app.sh`
+- tests root: `tests/`
+- human-facing project overview: `README.md`
