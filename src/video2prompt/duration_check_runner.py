@@ -33,10 +33,12 @@ class DurationCheckRunner:
         parser: ParserClient,
         config: AppConfig,
         logger: logging.Logger | None = None,
+        ffprobe_path: str | None = None,
     ):
         self.parser = parser
         self.config = config
         self.logger = logger or logging.getLogger("video2prompt")
+        self.ffprobe_path = (ffprobe_path or "").strip()
 
     async def run(
         self,
@@ -189,7 +191,7 @@ class DurationCheckRunner:
 
     async def _run_ffprobe(self, video_url: str, cancel_event: asyncio.Event) -> str:
         cmd = [
-            "ffprobe",
+            self.resolve_ffprobe_command(),
             "-v",
             "error",
             "-show_entries",
@@ -302,10 +304,16 @@ class DurationCheckRunner:
         if on_update is not None:
             on_update(task)
 
-    def _ensure_ffprobe_available(self) -> None:
-        if shutil.which("ffprobe"):
-            return
+    def resolve_ffprobe_command(self) -> str:
+        if self.ffprobe_path:
+            return self.ffprobe_path
+        found = shutil.which("ffprobe")
+        if found:
+            return found
         raise RuntimeError("未检测到 ffprobe，请先安装 ffmpeg 并确认 ffprobe 在 PATH 中")
+
+    def _ensure_ffprobe_available(self) -> None:
+        self.resolve_ffprobe_command()
 
     def _mark_cancelled(self, tasks: list[Task], on_update: TaskCallback | None) -> None:
         for task in tasks:

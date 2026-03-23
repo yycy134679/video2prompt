@@ -274,6 +274,50 @@ python -m pytest tests/test_task_scheduler_output_format.py -k json
 - `src/video2prompt/review_result.py`：JSON 输出解析与纠偏
 - `src/video2prompt/excel_exporter.py`：Excel 模板写入规则
 
+## macOS App 打包
+
+第一期 macOS 分发目标是 `video2prompt.app + zip`：
+
+- 使用 `PyInstaller` 生成 `dist/video2prompt.app`
+- 再打成 `dist/video2prompt-macos.zip`
+- 应用首次启动会在 `~/Library/Application Support/video2prompt/` 下生成：
+  - `config.yaml`
+  - `.env`
+  - `data/`
+  - `logs/`
+  - `exports/`
+- AI 模式需要在上述 `.env` 中填写 `VOLCENGINE_API_KEY` 或 `ARK_API_KEY`
+- “视频时长判断”模式依赖内置 `ffprobe`
+
+构建前准备：
+
+```bash
+. .venv/bin/activate
+python -m pip install pyinstaller
+chmod +x packaging/bin/ffprobe
+```
+
+运行构建：
+
+```bash
+bash scripts/build_macos_app.sh
+```
+
+当前构建脚本会检查：
+
+- `app.py`、`config.yaml`、`.env.example`、`docs/` 模板资源是否存在
+- `packaging/bin/ffprobe` 是否存在、可执行、可输出版本信息
+- `PyInstaller` 是否已安装
+
+> [!IMPORTANT]
+> 当前仓库不会自动提供 `packaging/bin/ffprobe`。构建前请先放入可分发的 macOS `ffprobe` 二进制，或补齐它依赖的 `.dylib`。
+
+> [!IMPORTANT]
+> 第一阶段产物默认未签名、未公证。运营同事首次打开时，可能需要右键 `video2prompt.app` 选择“打开”，或在“系统设置 -> 隐私与安全性”里允许该应用运行。
+
+> [!NOTE]
+> 未配置 API Key 时，应用仍可启动；但只有配置好 `.env` 后，AI 模式才会真正调用模型。
+
 ## 故障排查
 
 ### 启动时报“依赖未安装”

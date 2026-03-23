@@ -102,6 +102,7 @@ class VolcengineResponsesClient:
 
     async def _request_and_extract(self, body: dict[str, Any], api_mode: str) -> str:
         self._last_observation = self._empty_observation(api_mode=api_mode)
+        self._require_api_key()
         close_client = False
         client = self._http_client
         if client is None:
@@ -150,6 +151,11 @@ class VolcengineResponsesClient:
         finally:
             if close_client:
                 await client.aclose()
+
+    def _require_api_key(self) -> None:
+        if (self.api_key or "").strip():
+            return
+        raise ModelError("缺少 API Key，请先在 .env 中配置 VOLCENGINE_API_KEY 或 ARK_API_KEY")
 
     async def _request_stream_and_extract(
         self,

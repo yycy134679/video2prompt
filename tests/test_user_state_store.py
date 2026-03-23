@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from video2prompt.user_state_store import UserStateStore
 
 
@@ -40,3 +42,13 @@ def test_user_state_store_recovers_from_invalid_yaml(tmp_path: Path) -> None:
     assert state.douyin_cookie == ""
     assert state.updated_at == ""
     assert "douyin_cookie" in path.read_text(encoding="utf-8")
+
+
+def test_user_state_store_default_path_uses_runtime_app_support(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("VIDEO2PROMPT_APP_SUPPORT_DIR", str(tmp_path / "support"))
+
+    store = UserStateStore()
+
+    assert store.path == tmp_path / "support" / "user_state.yaml"

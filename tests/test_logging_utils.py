@@ -4,6 +4,8 @@ import logging
 from logging.handlers import TimedRotatingFileHandler
 from pathlib import Path
 
+import pytest
+
 from video2prompt.logging_utils import setup_logging
 
 
@@ -41,5 +43,19 @@ def test_setup_logging_keep_current_day_only_when_retention_is_one(tmp_path: Pat
         file_handlers = [h for h in logger.handlers if isinstance(h, TimedRotatingFileHandler)]
         assert len(file_handlers) == 1
         assert file_handlers[0].backupCount == 0
+    finally:
+        _close_logger(logger)
+
+
+def test_setup_logging_uses_runtime_log_path_from_env(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("VIDEO2PROMPT_APP_SUPPORT_DIR", str(tmp_path / "support"))
+    log_path = tmp_path / "support" / "logs" / "app.log"
+
+    logger = setup_logging(str(log_path), "INFO", retention_days=3)
+    try:
+        logger.info("runtime log path")
+        assert log_path.exists()
     finally:
         _close_logger(logger)
