@@ -6,7 +6,9 @@ from app import (
     RUN_CONTROLLER_REGISTRY,
     _get_run_controller,
     _persist_completed_run_snapshot,
+    _resolve_completed_run_feedback,
     _store_run_controller,
+    _sync_run_controller_state,
 )
 from video2prompt.models import Task, TaskState
 from app import RunController
@@ -104,3 +106,46 @@ def test_persist_completed_run_snapshot_keeps_translation_compliance_runtime_val
     assert session_state["last_app_mode"] == "翻译合规判断"
     assert session_state["last_default_user_prompt"] == "合规模板"
     assert session_state["last_output_format"] == "json"
+
+
+def test_persist_completed_run_snapshot_keeps_completion_status_flags() -> None:
+    session_state: dict[str, object] = {}
+    controller = _build_controller(state=TaskState.COMPLETED)
+    controller.finished = True
+    controller.cancelled = False
+    controller.error_message = ""
+
+    _persist_completed_run_snapshot(controller, session_state)
+
+    assert session_state["last_run_finished"] is True
+    assert session_state["last_run_cancelled"] is False
+    assert session_state["last_run_error_message"] == ""
+
+
+def test_resolve_completed_run_feedback_returns_success_for_finished_snapshot() -> None:
+    session_state = {
+        "last_tasks": [
+            Task(pid="1", original_link="https://example.com", state=TaskState.COMPLETED)
+        ],
+        "last_run_finished": True,
+        "last_run_cancelled": False,
+        "last_run_error_message": "",
+    }
+
+    assert _resolve_completed_run_feedback(session_state) == ("success", "任务执行完成")
+
+
+def test_sync_run_controller_state_reports_transition_when_thread_completes() -> None:
+    class DeadThread:
+        def is_alive(self) -> bool:
+            return False
+
+    session_state: dict[str, object] = {}
+    controller = _build_controller(state=TaskState.COMPLETED)
+    controller.thread = DeadThread()
+    _store_run_controller(controller, session_state)
+
+    transitioned = _sync_run_controller_state(controller, session_state)
+
+    assert transitioned is True
+    assert session_state["last_run_finished"] is True

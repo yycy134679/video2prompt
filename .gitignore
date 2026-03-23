@@ -15,3 +15,5 @@ cache.db
 !docs/product_prompt_template.xlsx
 /exports/
 .worktrees/
+/build/
+/dist/

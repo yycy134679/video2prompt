@@ -6,6 +6,7 @@ import pytest
 
 from video2prompt.config import ConfigManager
 from video2prompt.errors import ConfigError
+from video2prompt.runtime_paths import RuntimePaths
 
 
 def _write(path: Path, text: str) -> None:
@@ -147,7 +148,58 @@ volcengine:
     )
 
     with pytest.raises(ConfigError):
-        ConfigManager(env_path=str(env), config_path=str(cfg))
+        ConfigManager(env_path=str(env), config_path=str(cfg)).get_volcengine_api_key()
+
+
+def test_config_manager_loads_without_api_key_until_requested(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("VOLCENGINE_API_KEY", raising=False)
+    monkeypatch.delenv("ARK_API_KEY", raising=False)
+
+    env = tmp_path / ".env"
+    cfg = tmp_path / "config.yaml"
+    _write(env, "")
+    _write(
+        cfg,
+        """
+volcengine:
+  endpoint_id: "ep-test"
+        """.strip(),
+    )
+
+    manager = ConfigManager(env_path=str(env), config_path=str(cfg))
+
+    assert manager.get_config().volcengine.endpoint_id == "ep-test"
+
+
+def test_get_config_rewrites_relative_runtime_paths(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("VOLCENGINE_API_KEY", "volc_test_key")
+    monkeypatch.delenv("ARK_API_KEY", raising=False)
+
+    env = tmp_path / ".env"
+    cfg = tmp_path / "config.yaml"
+    _write(env, "")
+    _write(
+        cfg,
+        """
+volcengine:
+  endpoint_id: "ep-test"
+cache:
+  db_path: "data/cache.db"
+logging:
+  file_path: "logs/app.log"
+        """.strip(),
+    )
+    paths = RuntimePaths.for_bundle(bundle_root=tmp_path / "bundle", home_dir=tmp_path / "home")
+
+    manager = ConfigManager(env_path=str(env), config_path=str(cfg), runtime_paths=paths)
+    config = manager.get_config()
+
+    assert config.cache.db_path == str(paths.data_dir / "cache.db")
+    assert config.logging.file_path == str(paths.logs_dir / "app.log")
 
 
 def test_volcengine_missing_endpoint(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

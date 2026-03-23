@@ -6,10 +6,11 @@ import asyncio
 import copy
 import contextlib
 import hashlib
+import os
 import threading
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, MutableMapping
+from typing import Any, Mapping, MutableMapping
 from uuid import uuid4
 
 import httpx
@@ -31,6 +32,7 @@ from video2prompt.parser_client import (
     ParserClient,
 )
 from video2prompt.review_result import DEFAULT_REVIEW_PROMPT
+from video2prompt.runtime_paths import RuntimePaths
 from video2prompt.task_scheduler import TaskScheduler
 from video2prompt.user_state_store import UserStateStore
 from video2prompt.validator import InputValidator
@@ -54,16 +56,15 @@ SESSION_RUN_CONTROLLER = "run_controller_id"
 SESSION_COOKIE_NOTICE = "cookie_notice"
 SESSION_COOKIE_FAILURE = "cookie_failure"
 SESSION_COOKIE_INPUT_RESET = "cookie_input_reset"
+SESSION_LAST_RUN_FINISHED = "last_run_finished"
+SESSION_LAST_RUN_CANCELLED = "last_run_cancelled"
+SESSION_LAST_RUN_ERROR_MESSAGE = "last_run_error_message"
 SESSION_VIDEO_PROMPT = "video_prompt"
 SESSION_TRANSLATION_COMPLIANCE_PROMPT = "translation_compliance_prompt"
 SESSION_VIDEO_PROMPT_OUTPUT_FORMAT = "video_prompt_output_format"
 SETTING_VIDEO_PROMPT = "prompt.video_prompt"
 SETTING_TRANSLATION_COMPLIANCE_PROMPT = "prompt.translation_compliance"
 SETTING_VIDEO_PROMPT_OUTPUT_FORMAT = "output_format.video_prompt"
-VIDEO_PROMPT_TEMPLATE_PATH = Path("docs/视频复刻提示词.md")
-TRANSLATION_COMPLIANCE_TEMPLATE_PATH = Path("docs/视频内容审查.md")
-
-
 @dataclass
 class RunController:
     tasks: list[Task]
@@ -87,6 +88,96 @@ class RunController:
 class ResolvedRunSettings:
     prompt_text: str
     output_format: str
+
+
+@dataclass(frozen=True)
+class RuntimeFiles:
+    resource_root: Path
+    app_support_dir: Path
+    env_path: Path
+    config_path: Path
+    exports_dir: Path
+    ffprobe_path: Path
+    video_prompt_template_path: Path
+    translation_template_path: Path
+    excel_template_path: Path
+
+
+def resolve_runtime_files(environ: Mapping[str, str] | None = None) -> RuntimeFiles:
+    env = environ or os.environ
+    resource_root = Path(env.get("VIDEO2PROMPT_RESOURCE_ROOT", "."))
+    app_support_dir = Path(
+        env.get(
+            "VIDEO2PROMPT_APP_SUPPORT_DIR",
+            str(Path.home() / "Library" / "Application Support" / "video2prompt"),
+        )
+    )
+    env_path = Path(env.get("VIDEO2PROMPT_ENV_PATH", str(app_support_dir / ".env")))
+    config_path = Path(env.get("VIDEO2PROMPT_CONFIG_PATH", str(app_support_dir / "config.yaml")))
+    return RuntimeFiles(
+        resource_root=resource_root,
+        app_support_dir=app_support_dir,
+        env_path=env_path,
+        config_path=config_path,
+        exports_dir=app_support_dir / "exports",
+        ffprobe_path=Path(
+            env.get("VIDEO2PROMPT_FFPROBE_PATH", str(resource_root / "bin" / "ffprobe"))
+        ),
+        video_prompt_template_path=resource_root / "docs" / "视频复刻提示词.md",
+        translation_template_path=resource_root / "docs" / "视频内容审查.md",
+        excel_template_path=resource_root / "docs" / "product_prompt_template.xlsx",
+    )
+
+
+def build_config_manager(
+    environ: Mapping[str, str] | None = None,
+    use_runtime_paths: bool = False,
+) -> ConfigManager:
+    runtime_files = resolve_runtime_files(environ)
+    runtime_paths = None
+    if use_runtime_paths:
+        runtime_paths = RuntimePaths(
+            resource_root=runtime_files.resource_root,
+            app_support_dir=runtime_files.app_support_dir,
+            docs_dir=runtime_files.resource_root / "docs",
+            data_dir=runtime_files.app_support_dir / "data",
+            logs_dir=runtime_files.app_support_dir / "logs",
+            exports_dir=runtime_files.exports_dir,
+            binaries_dir=runtime_files.resource_root / "bin",
+        )
+    return ConfigManager(
+        env_path=str(runtime_files.env_path),
+        config_path=str(runtime_files.config_path),
+        runtime_paths=runtime_paths,
+    )
+
+
+def build_excel_exporter(runtime_files: RuntimeFiles) -> ExcelExporter:
+    return ExcelExporter(template_path=str(runtime_files.excel_template_path))
+
+
+def ensure_exports_dir(runtime_files: RuntimeFiles) -> Path:
+    runtime_files.exports_dir.mkdir(parents=True, exist_ok=True)
+    return runtime_files.exports_dir
+
+
+def build_duration_runner(
+    parser_client: ParserClient,
+    config,
+    logger,
+    runtime_files: RuntimeFiles,
+) -> DurationCheckRunner:
+    return DurationCheckRunner(
+        parser=parser_client,
+        config=config,
+        logger=logger,
+        ffprobe_path=str(runtime_files.ffprobe_path),
+    )
+
+
+def resolve_runtime_api_key(environ: Mapping[str, str] | None = None) -> str:
+    env = environ or os.environ
+    return (env.get("VOLCENGINE_API_KEY", "").strip() or env.get("ARK_API_KEY", "").strip())
 
 
 @st.cache_resource
@@ -360,6 +451,7 @@ async def _run_duration_checker(
     config,
     tasks: list[Task],
     logger,
+    runtime_files: RuntimeFiles,
     cancel_event: asyncio.Event,
     on_update=None,
 ):
@@ -368,11 +460,7 @@ async def _run_duration_checker(
         timeout_seconds=config.parser.timeout_seconds,
         http_client=parser_http,
     )
-    runner = DurationCheckRunner(
-        parser=parser_client,
-        config=config,
-        logger=logger,
-    )
+    runner = build_duration_runner(parser_client, config, logger, runtime_files)
     try:
         await runner.run(tasks=tasks, on_update=on_update, cancel_event=cancel_event)
     finally:
@@ -427,20 +515,27 @@ def _persist_completed_run_snapshot(
     state["last_app_mode"] = controller.app_mode_value
     state["last_default_user_prompt"] = controller.default_user_prompt
     state["last_output_format"] = controller.output_format
+    state[SESSION_LAST_RUN_FINISHED] = controller.finished
+    state[SESSION_LAST_RUN_CANCELLED] = controller.cancelled or controller.stop_requested
+    state[SESSION_LAST_RUN_ERROR_MESSAGE] = controller.error_message
 
 
-def _sync_run_controller_state(controller: RunController | None) -> None:
+def _sync_run_controller_state(
+    controller: RunController | None,
+    session_state: MutableMapping[str, Any] | None = None,
+) -> bool:
     if controller is None or controller.thread is None:
-        return
+        return False
     if controller.thread.is_alive():
-        return
+        return False
     with controller.lock:
         controller.running = False
         controller.finished = True
         controller.loop = None
         controller.cancel_event = None
-    _persist_completed_run_snapshot(controller)
-    _clear_run_controller()
+    _persist_completed_run_snapshot(controller, session_state)
+    _clear_run_controller(session_state)
+    return True
 
 
 def _is_run_active(controller: RunController | None) -> bool:
@@ -458,6 +553,27 @@ def _request_stop(controller: RunController) -> None:
         cancel_event = controller.cancel_event
     if loop is not None and cancel_event is not None and not cancel_event.is_set():
         loop.call_soon_threadsafe(cancel_event.set)
+
+
+def _resolve_completed_run_feedback(
+    session_state: MutableMapping[str, Any] | None = None,
+) -> tuple[str, str] | None:
+    state = st.session_state if session_state is None else session_state
+    last_tasks = state.get("last_tasks")
+    if not isinstance(last_tasks, list) or not last_tasks:
+        return None
+
+    error_message = str(state.get(SESSION_LAST_RUN_ERROR_MESSAGE, "") or "")
+    cancelled = bool(state.get(SESSION_LAST_RUN_CANCELLED, False))
+    finished = bool(state.get(SESSION_LAST_RUN_FINISHED, False))
+
+    if error_message:
+        return ("error", f"任务执行失败: {error_message}")
+    if finished and cancelled:
+        return ("warning", "任务已停止，未完成任务已标记为已取消")
+    if finished:
+        return ("success", "任务执行完成")
+    return None
 
 
 def _scheduler_thread_entry(
@@ -521,6 +637,7 @@ def _duration_checker_thread_entry(
     controller: RunController,
     config,
     logger,
+    runtime_files: RuntimeFiles,
 ) -> None:
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
@@ -541,6 +658,7 @@ def _duration_checker_thread_entry(
                 config=config,
                 tasks=controller.tasks,
                 logger=logger,
+                runtime_files=runtime_files,
                 cancel_event=cancel_event,
             )
         )
@@ -582,7 +700,9 @@ def _render_runtime_panel(controller: RunController | None) -> None:
     @st.fragment(run_every=refresh_interval)
     def _panel() -> None:
         current_controller = _get_run_controller()
-        _sync_run_controller_state(current_controller)
+        transitioned = _sync_run_controller_state(current_controller)
+        if transitioned:
+            st.rerun()
 
         tasks_to_render = None
         show_category = False
@@ -606,6 +726,11 @@ def _render_runtime_panel(controller: RunController | None) -> None:
             )
 
         if current_controller is None:
+            feedback = _resolve_completed_run_feedback()
+            if feedback is None:
+                return
+            level, message = feedback
+            getattr(st, level)(message)
             return
 
         with current_controller.lock:
@@ -726,9 +851,10 @@ def _render_cookie_panel(user_state_store: UserStateStore, tasks: list[Task]) ->
 def main() -> None:
     st.set_page_config(page_title="video2prompt", layout="wide")
     st.title("video2prompt - 批量视频解读")
+    runtime_files = resolve_runtime_files()
 
     try:
-        config_manager = ConfigManager(env_path=".env", config_path="config.yaml")
+        config_manager = build_config_manager(use_runtime_paths=True)
         base_config = config_manager.get_config()
     except ConfigError as exc:
         st.error(f"配置错误: {exc}")
@@ -744,9 +870,9 @@ def main() -> None:
     cache = CacheStore(base_config.cache.db_path)
     asyncio.run(cache.init_db())
 
-    video_prompt_template = load_prompt_template(VIDEO_PROMPT_TEMPLATE_PATH, "")
+    video_prompt_template = load_prompt_template(runtime_files.video_prompt_template_path, "")
     translation_prompt_template = load_prompt_template(
-        TRANSLATION_COMPLIANCE_TEMPLATE_PATH,
+        runtime_files.translation_template_path,
         DEFAULT_REVIEW_PROMPT,
     )
     if SESSION_VIDEO_PROMPT not in st.session_state:
@@ -1111,15 +1237,12 @@ def main() -> None:
                     "controller": controller,
                     "config": runtime_config,
                     "logger": logger,
+                    "runtime_files": runtime_files,
                 },
                 daemon=True,
             )
         else:
-            try:
-                api_key = config_manager.get_volcengine_api_key()
-            except ConfigError as exc:
-                st.error(f"配置错误: {exc}")
-                st.stop()
+            api_key = resolve_runtime_api_key()
             worker = threading.Thread(
                 target=_scheduler_thread_entry,
                 kwargs={
@@ -1169,8 +1292,7 @@ def main() -> None:
 
             if export_duration_clicked:
                 exporter = DurationExcelExporter()
-                output_dir = Path("exports")
-                output_dir.mkdir(parents=True, exist_ok=True)
+                output_dir = ensure_exports_dir(runtime_files)
                 short_name, long_failed_name = exporter.generate_filenames()
                 short_file = output_dir / short_name
                 long_failed_file = output_dir / long_failed_name
@@ -1237,11 +1359,8 @@ def main() -> None:
                 export_markdown_clicked = st.button("导出 Markdown（按类目）")
 
             if export_excel_clicked:
-                exporter = ExcelExporter(
-                    template_path="docs/product_prompt_template.xlsx"
-                )
-                output_dir = Path("exports")
-                output_dir.mkdir(parents=True, exist_ok=True)
+                exporter = build_excel_exporter(runtime_files)
+                output_dir = ensure_exports_dir(runtime_files)
                 output_file = output_dir / ExcelExporter.generate_filename()
                 exporter.export(
                     tasks=restore_tasks,
@@ -1256,7 +1375,7 @@ def main() -> None:
                 st.success(f"导出成功: {output_file}")
 
             if export_markdown_clicked:
-                markdown_exporter = MarkdownExporter(output_root="exports")
+                markdown_exporter = MarkdownExporter(output_root=str(ensure_exports_dir(runtime_files)))
                 try:
                     result = markdown_exporter.export_by_category(tasks=restore_tasks)
                 except ValueError as exc:
@@ -1319,11 +1438,8 @@ def main() -> None:
                 export_excel_clicked = st.button("导出 Excel")
 
             if export_excel_clicked:
-                exporter = ExcelExporter(
-                    template_path="docs/product_prompt_template.xlsx"
-                )
-                output_dir = Path("exports")
-                output_dir.mkdir(parents=True, exist_ok=True)
+                exporter = build_excel_exporter(runtime_files)
+                output_dir = ensure_exports_dir(runtime_files)
                 output_file = output_dir / ExcelExporter.generate_filename()
                 exporter.export(
                     tasks=restore_tasks,

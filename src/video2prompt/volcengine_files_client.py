@@ -28,6 +28,11 @@ class VolcengineFilesClient:
         self.timeout_seconds = timeout_seconds
         self._http_client = http_client
 
+    def _require_api_key(self) -> None:
+        if (self.api_key or "").strip():
+            return
+        raise _missing_api_key_error()
+
     async def download_video_to_temp(self, url: str, max_mb: int) -> str:
         """流式下载视频到临时文件，超过阈值立即终止。"""
         close_client = False
@@ -69,6 +74,7 @@ class VolcengineFilesClient:
     async def upload_file(self, path: str, fps: float, expire_days: int = 7) -> str:
         """上传视频文件并返回 file_id。"""
         del fps  # File ID 路径不使用 fps，保留签名便于调度层统一调用。
+        self._require_api_key()
 
         close_client = False
         client = self._http_client
@@ -112,6 +118,7 @@ class VolcengineFilesClient:
 
     async def poll_file_ready(self, file_id: str, timeout_seconds: int) -> None:
         """轮询文件状态直到 active。"""
+        self._require_api_key()
         close_client = False
         client = self._http_client
         if client is None:
@@ -155,6 +162,7 @@ class VolcengineFilesClient:
 
     async def delete_file(self, file_id: str) -> None:
         """删除文件（best-effort）。"""
+        self._require_api_key()
         close_client = False
         client = self._http_client
         if client is None:
@@ -180,3 +188,7 @@ async def asyncio_sleep(seconds: float) -> None:
     import asyncio
 
     await asyncio.sleep(seconds)
+
+
+def _missing_api_key_error() -> ModelError:
+    return ModelError("缺少 API Key，请先在 .env 中配置 VOLCENGINE_API_KEY 或 ARK_API_KEY")

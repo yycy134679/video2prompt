@@ -23,14 +23,21 @@ from .models import (
     TaskConfig,
     VolcengineConfig,
 )
+from .runtime_paths import RuntimePaths
 
 
 class ConfigManager:
     """加载与校验配置，支持运行时覆盖。"""
 
-    def __init__(self, env_path: str = ".env", config_path: str = "config.yaml"):
+    def __init__(
+        self,
+        env_path: str = ".env",
+        config_path: str = "config.yaml",
+        runtime_paths: RuntimePaths | None = None,
+    ):
         self._env_path = Path(env_path)
         self._config_path = Path(config_path)
+        self._runtime_paths = runtime_paths
         self._overrides: dict[str, Any] = {}
         self._base_config = AppConfig()
         load_dotenv(self._env_path, override=False)
@@ -84,7 +91,20 @@ class ConfigManager:
         base = asdict(self._base_config)
         merged = copy.deepcopy(base)
         self._deep_merge(merged, self._overrides)
-        return self._build_app_config(merged)
+        config = self._build_app_config(merged)
+        return self._apply_runtime_file_overrides(config)
+
+    def _apply_runtime_file_overrides(self, config: AppConfig) -> AppConfig:
+        if self._runtime_paths is None:
+            return config
+
+        if not Path(config.cache.db_path).is_absolute():
+            config.cache.db_path = str(self._runtime_paths.data_dir / Path(config.cache.db_path).name)
+        if not Path(config.logging.file_path).is_absolute():
+            config.logging.file_path = str(
+                self._runtime_paths.logs_dir / Path(config.logging.file_path).name
+            )
+        return config
 
     @staticmethod
     def _set_dotted_value(target: dict[str, Any], dotted_key: str, value: Any) -> None:
@@ -220,8 +240,6 @@ class ConfigManager:
         if config.logging.retention_days <= 0:
             raise ConfigError("logging.retention_days 必须 > 0")
 
-        ConfigManager._validate_volcengine_api_key()
-
     @staticmethod
     def _normalize_volc_thinking_type(value: str) -> str:
         return (value or "").strip().lower()
@@ -234,9 +252,3 @@ class ConfigManager:
     @staticmethod
     def _normalize_volc_input_mode(value: str) -> str:
         return (value or "").strip().lower()
-
-    @staticmethod
-    def _validate_volcengine_api_key() -> None:
-        volc_key = os.getenv("VOLCENGINE_API_KEY", "").strip() or os.getenv("ARK_API_KEY", "").strip()
-        if not volc_key:
-            raise ConfigError("缺少 VOLCENGINE_API_KEY（或 ARK_API_KEY），请在 .env 中配置")

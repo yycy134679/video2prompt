@@ -5,11 +5,18 @@ from __future__ import annotations
 from contextlib import suppress
 from dataclasses import dataclass
 from datetime import datetime
+import os
 from pathlib import Path
 
 import yaml
 
-DEFAULT_USER_STATE_PATH = Path.home() / "Library" / "Application Support" / "video2prompt" / "user_state.yaml"
+
+
+def resolve_default_user_state_path() -> Path:
+    app_support_dir = os.getenv("VIDEO2PROMPT_APP_SUPPORT_DIR", "").strip()
+    if app_support_dir:
+        return Path(app_support_dir) / "user_state.yaml"
+    return Path.home() / "Library" / "Application Support" / "video2prompt" / "user_state.yaml"
 
 
 @dataclass(frozen=True)
@@ -26,7 +33,7 @@ class UserStateStore:
     """持久化抖音 Cookie，不写入 config.yaml 或 SQLite。"""
 
     def __init__(self, path: str | Path | None = None):
-        self._path = Path(path) if path is not None else DEFAULT_USER_STATE_PATH
+        self._path = Path(path) if path is not None else resolve_default_user_state_path()
 
     @property
     def path(self) -> Path:

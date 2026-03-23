@@ -145,3 +145,16 @@ def test_run_fails_fast_when_ffprobe_missing(monkeypatch: pytest.MonkeyPatch) ->
 
     with pytest.raises(RuntimeError, match="ffprobe"):
         asyncio.run(_run())
+
+
+def test_resolve_ffprobe_command_prefers_explicit_path(tmp_path) -> None:
+    parser = _ParserByLink()
+    ffprobe_path = tmp_path / "ffprobe"
+    ffprobe_path.write_text("", encoding="utf-8")
+    runner = DurationCheckRunner(
+        parser=parser,
+        config=_make_config(parser_backoff=[1]),
+        ffprobe_path=str(ffprobe_path),
+    )
+
+    assert runner.resolve_ffprobe_command() == str(ffprobe_path)
