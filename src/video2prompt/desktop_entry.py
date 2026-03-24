@@ -4,9 +4,13 @@ from __future__ import annotations
 
 import os
 import subprocess
+import sys
+import time
 import webbrowser
 from pathlib import Path
 from typing import Any, Callable, Mapping
+
+import httpx
 
 from streamlit.web.bootstrap import load_config_options, run as streamlit_bootstrap_run
 
@@ -62,6 +66,10 @@ def build_streamlit_flag_options() -> dict[str, Any]:
 
 def build_app_url(port: int = APP_PORT) -> str:
     return f"http://127.0.0.1:{port}/"
+
+
+def build_healthcheck_url(port: int = APP_PORT) -> str:
+    return f"http://127.0.0.1:{port}/_stcore/health"
 
 
 def list_listening_processes(
@@ -133,23 +141,86 @@ def launch_streamlit_app(
     )
 
 
+def spawn_streamlit_server(
+    paths: RuntimePaths,
+    env: Mapping[str, str],
+    popen_func: Callable[..., subprocess.Popen[Any]] = subprocess.Popen,
+) -> None:
+    command = [sys.executable]
+    if not getattr(sys, "frozen", False):
+        command.extend(["-m", "video2prompt.desktop_entry"])
+
+    child_env = dict(env)
+    child_env["VIDEO2PROMPT_DESKTOP_SERVER"] = "1"
+
+    popen_func(
+        command,
+        env=child_env,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+        cwd=str(paths.resource_root),
+    )
+
+
+def wait_for_server_ready(
+    port: int = APP_PORT,
+    timeout_seconds: float = 15.0,
+    sleep_seconds: float = 0.25,
+) -> None:
+    deadline = time.monotonic() + timeout_seconds
+    last_error = ""
+    url = build_healthcheck_url(port)
+    while time.monotonic() < deadline:
+        try:
+            response = httpx.get(url, timeout=1.0)
+            if response.status_code == 200 and response.text.strip().lower() == "ok":
+                return
+            last_error = f"healthcheck returned {response.status_code}: {response.text.strip()}"
+        except httpx.HTTPError as exc:
+            last_error = str(exc)
+        time.sleep(sleep_seconds)
+    raise RuntimeError(f"等待本地服务启动超时: {last_error or '未知错误'}")
+
+
 def launch(
     paths: RuntimePaths | None = None,
     prepare_func: Callable[[RuntimePaths], None] = prepare_user_runtime,
     env_builder: Callable[[RuntimePaths, Mapping[str, str] | None], dict[str, str]] = build_runtime_env,
     instance_handler: Callable[[int], bool] = handle_running_instance,
+    server_launcher: Callable[[RuntimePaths, Mapping[str, str]], None] = spawn_streamlit_server,
+    wait_for_ready_func: Callable[[int], None] = wait_for_server_ready,
+    open_browser_func: Callable[[str], Any] = webbrowser.open,
+) -> None:
+    runtime_paths = paths or build_runtime_paths()
+    prepare_func(runtime_paths)
+    runtime_env = env_builder(runtime_paths, os.environ)
+    os.environ.update(runtime_env)
+    if instance_handler(APP_PORT):
+        return
+    server_launcher(runtime_paths, runtime_env)
+    wait_for_ready_func(APP_PORT)
+    open_browser_func(build_app_url(APP_PORT))
+
+
+def run_streamlit_server(
+    paths: RuntimePaths | None = None,
+    prepare_func: Callable[[RuntimePaths], None] = prepare_user_runtime,
+    env_builder: Callable[[RuntimePaths, Mapping[str, str] | None], dict[str, str]] = build_runtime_env,
     launch_func: Callable[[RuntimePaths], None] = launch_streamlit_app,
 ) -> None:
     runtime_paths = paths or build_runtime_paths()
     prepare_func(runtime_paths)
     os.environ.update(env_builder(runtime_paths, os.environ))
-    if instance_handler(APP_PORT):
-        return
     launch_func(runtime_paths)
 
 
 def main() -> int:
     if os.environ.get("VIDEO2PROMPT_DESKTOP_ENTRY_NOOP") == "1":
+        return 0
+    if os.environ.get("VIDEO2PROMPT_DESKTOP_SERVER") == "1":
+        run_streamlit_server()
         return 0
     launch()
     return 0

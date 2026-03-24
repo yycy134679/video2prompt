@@ -24,3 +24,16 @@ def test_spec_collects_app_module_dependencies() -> None:
 
     assert 'collect_submodules("video2prompt")' in text
     assert '"app"' in text
+
+
+def test_spec_marks_bundle_as_agent_app() -> None:
+    text = SPEC_PATH.read_text(encoding="utf-8")
+
+    assert "info_plist={" in text
+    assert '"LSUIElement": True' in text
+
+
+def test_spec_uses_project_icon_for_bundle() -> None:
+    text = SPEC_PATH.read_text(encoding="utf-8")
+
+    assert 'icon=os.path.join(ROOT_DIR, "icon.icns")' in text

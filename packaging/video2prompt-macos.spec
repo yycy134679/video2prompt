@@ -70,6 +70,9 @@ coll = COLLECT(
 app = BUNDLE(
     coll,
     name="video2prompt.app",
-    icon=None,
+    icon=os.path.join(ROOT_DIR, "icon.icns"),
     bundle_identifier="com.video2prompt.app",
+    info_plist={
+        "LSUIElement": True,
+    },
 )

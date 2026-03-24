@@ -4,17 +4,20 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from typing import Mapping
 
 from video2prompt.desktop_entry import (
     APP_PORT,
     build_runtime_env,
     build_streamlit_flag_options,
     handle_running_instance,
+    build_app_url,
     main,
     launch,
     launch_streamlit_app,
     prepare_user_runtime,
     resolve_app_path,
+    run_streamlit_server,
 )
 from video2prompt.runtime_paths import RuntimePaths
 
@@ -157,7 +160,11 @@ def test_prepare_user_runtime_does_not_overwrite_existing_files(tmp_path: Path) 
     assert (paths.app_support_dir / ".env").read_text(encoding="utf-8") == "VOLCENGINE_API_KEY=existing\n"
 
 
-def test_launch_prepares_runtime_builds_env_and_starts_app(tmp_path: Path) -> None:
+def test_build_app_url_points_to_local_streamlit_port() -> None:
+    assert build_app_url() == f"http://127.0.0.1:{APP_PORT}/"
+
+
+def test_launch_prepares_runtime_spawns_server_waits_and_opens_browser(tmp_path: Path) -> None:
     paths = make_paths(tmp_path)
     calls: list[str] = []
 
@@ -170,25 +177,35 @@ def test_launch_prepares_runtime_builds_env_and_starts_app(tmp_path: Path) -> No
         calls.append("env")
         return {"PATH": "custom", "VIDEO2PROMPT_STREAMLIT_PORT": str(APP_PORT)}
 
-    def fake_launch(runtime_paths: RuntimePaths, run_func=None) -> None:
+    def fake_spawn(runtime_paths: RuntimePaths, env: Mapping[str, str]) -> None:
         assert runtime_paths == paths
         assert os.environ["PATH"] == "custom"
-        calls.append("launch")
+        assert env["PATH"] == "custom"
+        calls.append("spawn")
 
     def fake_handle(port: int = APP_PORT) -> bool:
         assert port == APP_PORT
         calls.append("handle")
         return False
 
+    def fake_wait(port: int = APP_PORT) -> None:
+        assert port == APP_PORT
+        calls.append("wait")
+
+    opened_urls: list[str] = []
+
     launch(
         paths=paths,
         prepare_func=fake_prepare,
         env_builder=fake_build_env,
         instance_handler=fake_handle,
-        launch_func=fake_launch,
+        server_launcher=fake_spawn,
+        wait_for_ready_func=fake_wait,
+        open_browser_func=opened_urls.append,
     )
 
-    assert calls == ["prepare", "env", "handle", "launch"]
+    assert calls == ["prepare", "env", "handle", "spawn", "wait"]
+    assert opened_urls == [f"http://127.0.0.1:{APP_PORT}/"]
 
 
 def test_handle_running_instance_reuses_browser_for_existing_app() -> None:
@@ -235,15 +252,20 @@ def test_launch_does_not_start_new_server_when_existing_instance_reused(tmp_path
         calls.append("handle")
         return True
 
-    def fake_launch(runtime_paths: RuntimePaths, run_func=None) -> None:
-        calls.append("launch")
+    def fake_spawn(runtime_paths: RuntimePaths, env: Mapping[str, str]) -> None:
+        calls.append("spawn")
+
+    def fake_wait(port: int = APP_PORT) -> None:
+        calls.append("wait")
 
     launch(
         paths=paths,
         prepare_func=fake_prepare,
         env_builder=fake_build_env,
         instance_handler=fake_handle,
-        launch_func=fake_launch,
+        server_launcher=fake_spawn,
+        wait_for_ready_func=fake_wait,
+        open_browser_func=lambda url: None,
     )
 
     assert calls == ["prepare", "env", "handle"]
@@ -279,3 +301,42 @@ def test_main_calls_launch(monkeypatch) -> None:
 
     assert main() == 0
     assert calls == ["launch"]
+
+
+def test_main_runs_streamlit_server_in_child_mode(monkeypatch, tmp_path: Path) -> None:
+    paths = make_paths(tmp_path)
+    calls: list[str] = []
+
+    monkeypatch.setenv("VIDEO2PROMPT_DESKTOP_SERVER", "1")
+    monkeypatch.setattr("video2prompt.desktop_entry.run_streamlit_server", lambda: calls.append("run_streamlit_server"))
+
+    assert main() == 0
+    assert calls == ["run_streamlit_server"]
+
+
+def test_run_streamlit_server_prepares_runtime_builds_env_and_launches(tmp_path: Path) -> None:
+    paths = make_paths(tmp_path)
+    calls: list[str] = []
+
+    def fake_prepare(runtime_paths: RuntimePaths) -> None:
+        assert runtime_paths == paths
+        calls.append("prepare")
+
+    def fake_build_env(runtime_paths: RuntimePaths, existing_env=None):
+        assert runtime_paths == paths
+        calls.append("env")
+        return {"PATH": "child-path", "VIDEO2PROMPT_STREAMLIT_PORT": str(APP_PORT)}
+
+    def fake_launch_streamlit(runtime_paths: RuntimePaths) -> None:
+        assert runtime_paths == paths
+        assert os.environ["PATH"] == "child-path"
+        calls.append("launch_streamlit")
+
+    run_streamlit_server(
+        paths=paths,
+        prepare_func=fake_prepare,
+        env_builder=fake_build_env,
+        launch_func=fake_launch_streamlit,
+    )
+
+    assert calls == ["prepare", "env", "launch_streamlit"]
