@@ -73,7 +73,7 @@ circuit_breaker:
 # 单任务尾部延时配置
 task:
   # 任务完成后随机等待最小秒数
-  completion_delay_min_seconds: 2.0
+  completion_delay_min_seconds: 1.5
   # 任务完成后随机等待最大秒数
   completion_delay_max_seconds: 3.0
 
