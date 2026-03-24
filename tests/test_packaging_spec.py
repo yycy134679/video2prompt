@@ -37,3 +37,16 @@ def test_spec_uses_project_icon_for_bundle() -> None:
     text = SPEC_PATH.read_text(encoding="utf-8")
 
     assert 'icon=os.path.join(ROOT_DIR, "icon.icns")' in text
+
+
+def test_spec_sets_bundle_display_name_to_video_analysis() -> None:
+    text = SPEC_PATH.read_text(encoding="utf-8")
+
+    assert '"CFBundleDisplayName": "视频分析"' in text
+    assert '"CFBundleName": "视频分析"' in text
+
+
+def test_spec_sets_bundle_file_name_to_video_analysis() -> None:
+    text = SPEC_PATH.read_text(encoding="utf-8")
+
+    assert 'name="视频分析.app"' in text

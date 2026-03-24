@@ -43,13 +43,24 @@ def test_translation_compliance_mode_forces_json_output_format() -> None:
     assert result == OUTPUT_FORMAT_JSON
 
 
-def test_normal_mode_restores_saved_output_format() -> None:
+def test_non_compliance_mode_always_uses_plain_text_output_format() -> None:
     session_state = {
         "output_format": OUTPUT_FORMAT_JSON,
-        SESSION_VIDEO_PROMPT_OUTPUT_FORMAT: OUTPUT_FORMAT_PLAIN_TEXT,
+        SESSION_VIDEO_PROMPT_OUTPUT_FORMAT: OUTPUT_FORMAT_JSON,
     }
 
     result = resolve_output_format_for_mode(AppMode.VIDEO_PROMPT, session_state)
+
+    assert result == OUTPUT_FORMAT_PLAIN_TEXT
+
+
+def test_category_mode_always_uses_plain_text_output_format() -> None:
+    session_state = {
+        "output_format": OUTPUT_FORMAT_JSON,
+        SESSION_VIDEO_PROMPT_OUTPUT_FORMAT: OUTPUT_FORMAT_JSON,
+    }
+
+    result = resolve_output_format_for_mode(AppMode.CATEGORY_ANALYSIS, session_state)
 
     assert result == OUTPUT_FORMAT_PLAIN_TEXT
 
@@ -151,9 +162,9 @@ def test_resolve_prompt_setting_key_matches_mode() -> None:
     )
 
 
-def test_should_persist_output_format_only_for_normal_modes() -> None:
-    assert should_persist_output_format(AppMode.VIDEO_PROMPT) is True
-    assert should_persist_output_format(AppMode.CATEGORY_ANALYSIS) is True
+def test_should_not_persist_output_format_for_any_mode() -> None:
+    assert should_persist_output_format(AppMode.VIDEO_PROMPT) is False
+    assert should_persist_output_format(AppMode.CATEGORY_ANALYSIS) is False
     assert should_persist_output_format(AppMode.TRANSLATION_COMPLIANCE) is False
 
 
@@ -167,17 +178,14 @@ def test_build_persist_operations_for_translation_mode_only_writes_prompt() -> N
     assert operations == [("prompt.translation_compliance", "review")]
 
 
-def test_build_persist_operations_for_video_mode_writes_prompt_and_format() -> None:
+def test_build_persist_operations_for_video_mode_only_writes_prompt() -> None:
     operations = build_persist_operations(
         app_mode=AppMode.VIDEO_PROMPT,
         prompt_text="video",
         output_format=OUTPUT_FORMAT_JSON,
     )
 
-    assert operations == [
-        ("prompt.video_prompt", "video"),
-        ("output_format.video_prompt", OUTPUT_FORMAT_JSON),
-    ]
+    assert operations == [("prompt.video_prompt", "video")]
 
 
 def test_build_run_settings_uses_normalized_prompt_for_translation_mode() -> None:
@@ -193,7 +201,7 @@ def test_build_run_settings_uses_normalized_prompt_for_translation_mode() -> Non
     assert settings.prompt_text == "合规模板"
 
 
-def test_build_run_settings_uses_saved_output_format_for_video_mode() -> None:
+def test_build_run_settings_uses_plain_text_output_format_for_video_mode() -> None:
     settings = build_run_settings(
         app_mode=AppMode.VIDEO_PROMPT,
         prompt_text="自定义提示词",
@@ -202,7 +210,7 @@ def test_build_run_settings_uses_saved_output_format_for_video_mode() -> None:
         session_state={SESSION_VIDEO_PROMPT_OUTPUT_FORMAT: OUTPUT_FORMAT_JSON},
     )
 
-    assert settings.output_format == OUTPUT_FORMAT_JSON
+    assert settings.output_format == OUTPUT_FORMAT_PLAIN_TEXT
     assert settings.prompt_text == "自定义提示词"
 
 

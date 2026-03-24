@@ -8,10 +8,12 @@ from typing import Mapping
 
 from video2prompt.desktop_entry import (
     APP_PORT,
+    APP_PORT_SEARCH_LIMIT,
     build_runtime_env,
     build_streamlit_flag_options,
     handle_running_instance,
     build_app_url,
+    choose_launch_port,
     main,
     launch,
     launch_streamlit_app,
@@ -51,14 +53,15 @@ def test_build_runtime_env_exports_runtime_locations(tmp_path: Path) -> None:
 def test_build_runtime_env_sets_fixed_streamlit_port(tmp_path: Path) -> None:
     paths = make_paths(tmp_path)
 
-    env = build_runtime_env(paths, existing_env={})
+    env = build_runtime_env(paths, existing_env={}, port=8510)
 
-    assert env["VIDEO2PROMPT_STREAMLIT_PORT"] == str(APP_PORT)
+    assert env["VIDEO2PROMPT_STREAMLIT_PORT"] == "8510"
 
 
 def test_build_streamlit_flag_options_disables_dev_mode_and_pins_port() -> None:
-    assert build_streamlit_flag_options() == {
-        "server.port": APP_PORT,
+    assert build_streamlit_flag_options(port=8510) == {
+        "server.port": 8510,
+        "server.headless": True,
         "global.developmentMode": False,
     }
 
@@ -81,13 +84,16 @@ def test_launch_streamlit_app_uses_fixed_port(tmp_path: Path) -> None:
         calls["flag_options"] = flag_options
         calls["stop_immediately_for_testing"] = stop_immediately_for_testing
 
+    os.environ["VIDEO2PROMPT_STREAMLIT_PORT"] = "8510"
+
     launch_streamlit_app(paths, run_func=fake_run)
 
     assert calls["main_script_path"] == str(paths.resource_root / "app.py")
     assert calls["is_hello"] is False
     assert calls["args"] == []
     assert calls["flag_options"] == {
-        "server.port": APP_PORT,
+        "server.port": 8510,
+        "server.headless": True,
         "global.developmentMode": False,
     }
 
@@ -109,28 +115,71 @@ def test_launch_streamlit_app_loads_config_flags_before_starting(tmp_path: Path)
     ) -> None:
         calls.append(("run", flag_options.copy()))
 
-    launch_streamlit_app(
-        paths,
-        run_func=fake_run,
-        load_config_func=fake_load_config,
-    )
+    os.environ["VIDEO2PROMPT_STREAMLIT_PORT"] = "8510"
+
+    launch_streamlit_app(paths, run_func=fake_run, load_config_func=fake_load_config)
 
     assert calls == [
         (
             "load",
             {
-                "server.port": APP_PORT,
+                "server.port": 8510,
+                "server.headless": True,
                 "global.developmentMode": False,
             },
         ),
         (
             "run",
             {
-                "server.port": APP_PORT,
+                "server.port": 8510,
+                "server.headless": True,
                 "global.developmentMode": False,
             },
         ),
     ]
+
+
+def test_choose_launch_port_falls_back_when_primary_port_taken_by_other_process() -> None:
+    checked_ports: list[int] = []
+
+    def fake_instance_handler(port: int) -> bool:
+        checked_ports.append(port)
+        if port == APP_PORT:
+            raise RuntimeError("端口 8501 已被其他进程占用: python3(999)")
+        return False
+
+    selected_port = choose_launch_port(instance_handler=fake_instance_handler)
+
+    assert selected_port == APP_PORT + 1
+    assert checked_ports == [APP_PORT, APP_PORT + 1]
+
+
+def test_choose_launch_port_reuses_existing_app_on_fallback_port() -> None:
+    checked_ports: list[int] = []
+
+    def fake_instance_handler(port: int) -> bool:
+        checked_ports.append(port)
+        if port == APP_PORT:
+            raise RuntimeError("端口 8501 已被其他进程占用: python3(999)")
+        return True
+
+    selected_port = choose_launch_port(instance_handler=fake_instance_handler)
+
+    assert selected_port is None
+    assert checked_ports == [APP_PORT, APP_PORT + 1]
+
+
+def test_choose_launch_port_raises_when_no_port_available() -> None:
+    def fake_instance_handler(port: int) -> bool:
+        raise RuntimeError(f"端口 {port} 已被其他进程占用: python3({port})")
+
+    try:
+        choose_launch_port(instance_handler=fake_instance_handler)
+    except RuntimeError as exc:
+        assert str(APP_PORT) in str(exc)
+        assert str(APP_PORT + APP_PORT_SEARCH_LIMIT - 1) in str(exc)
+    else:
+        raise AssertionError("expected RuntimeError")
 
 
 def test_prepare_user_runtime_copies_config_and_bootstraps_env(tmp_path: Path) -> None:
@@ -172,10 +221,11 @@ def test_launch_prepares_runtime_spawns_server_waits_and_opens_browser(tmp_path:
         assert runtime_paths == paths
         calls.append("prepare")
 
-    def fake_build_env(runtime_paths: RuntimePaths, existing_env=None):
+    def fake_build_env(runtime_paths: RuntimePaths, existing_env=None, port=None):
         assert runtime_paths == paths
+        assert port == APP_PORT + 1
         calls.append("env")
-        return {"PATH": "custom", "VIDEO2PROMPT_STREAMLIT_PORT": str(APP_PORT)}
+        return {"PATH": "custom", "VIDEO2PROMPT_STREAMLIT_PORT": str(APP_PORT + 1)}
 
     def fake_spawn(runtime_paths: RuntimePaths, env: Mapping[str, str]) -> None:
         assert runtime_paths == paths
@@ -183,13 +233,13 @@ def test_launch_prepares_runtime_spawns_server_waits_and_opens_browser(tmp_path:
         assert env["PATH"] == "custom"
         calls.append("spawn")
 
-    def fake_handle(port: int = APP_PORT) -> bool:
-        assert port == APP_PORT
-        calls.append("handle")
-        return False
+    def fake_choose_port(instance_handler) -> int | None:
+        calls.append("choose")
+        assert instance_handler(APP_PORT) is False
+        return APP_PORT + 1
 
     def fake_wait(port: int = APP_PORT) -> None:
-        assert port == APP_PORT
+        assert port == APP_PORT + 1
         calls.append("wait")
 
     opened_urls: list[str] = []
@@ -198,26 +248,42 @@ def test_launch_prepares_runtime_spawns_server_waits_and_opens_browser(tmp_path:
         paths=paths,
         prepare_func=fake_prepare,
         env_builder=fake_build_env,
-        instance_handler=fake_handle,
+        instance_handler=lambda port: False,
+        port_selector=fake_choose_port,
         server_launcher=fake_spawn,
         wait_for_ready_func=fake_wait,
         open_browser_func=opened_urls.append,
     )
 
-    assert calls == ["prepare", "env", "handle", "spawn", "wait"]
-    assert opened_urls == [f"http://127.0.0.1:{APP_PORT}/"]
+    assert calls == ["prepare", "choose", "env", "spawn", "wait"]
+    assert opened_urls == [f"http://127.0.0.1:{APP_PORT + 1}/"]
 
 
 def test_handle_running_instance_reuses_browser_for_existing_app() -> None:
     opened_urls: list[str] = []
 
     handled = handle_running_instance(
-        listeners_func=lambda port: [(1234, "video2prompt")],
+        listeners_func=lambda port: [(1234, "/tmp/视频分析.app/Contents/MacOS/video2prompt")],
         open_browser_func=opened_urls.append,
+        current_executable="/tmp/视频分析.app/Contents/MacOS/video2prompt",
     )
 
     assert handled is True
     assert opened_urls == [f"http://127.0.0.1:{APP_PORT}/"]
+
+
+def test_handle_running_instance_stops_stale_app_listener_and_restarts() -> None:
+    terminated_pids: list[int] = []
+
+    handled = handle_running_instance(
+        listeners_func=lambda port: [(4321, "/tmp/video2prompt.app/Contents/MacOS/video2prompt")],
+        open_browser_func=lambda url: None,
+        current_executable="/tmp/视频分析.app/Contents/MacOS/video2prompt",
+        terminate_listener_func=terminated_pids.append,
+    )
+
+    assert handled is False
+    assert terminated_pids == [4321]
 
 
 def test_handle_running_instance_raises_for_other_process() -> None:
@@ -241,14 +307,14 @@ def test_launch_does_not_start_new_server_when_existing_instance_reused(tmp_path
         assert runtime_paths == paths
         calls.append("prepare")
 
-    def fake_build_env(runtime_paths: RuntimePaths, existing_env=None):
+    def fake_build_env(runtime_paths: RuntimePaths, existing_env=None, port=None):
         assert runtime_paths == paths
+        assert port is None
         calls.append("env")
         return {"PATH": "custom", "VIDEO2PROMPT_STREAMLIT_PORT": str(APP_PORT)}
 
     def fake_handle(port: int = APP_PORT) -> bool:
         assert port == APP_PORT
-        assert os.environ["PATH"] == "custom"
         calls.append("handle")
         return True
 
@@ -258,17 +324,23 @@ def test_launch_does_not_start_new_server_when_existing_instance_reused(tmp_path
     def fake_wait(port: int = APP_PORT) -> None:
         calls.append("wait")
 
+    def fake_choose_port(instance_handler) -> int | None:
+        calls.append("choose")
+        assert instance_handler(APP_PORT) is True
+        return None
+
     launch(
         paths=paths,
         prepare_func=fake_prepare,
         env_builder=fake_build_env,
         instance_handler=fake_handle,
+        port_selector=fake_choose_port,
         server_launcher=fake_spawn,
         wait_for_ready_func=fake_wait,
         open_browser_func=lambda url: None,
     )
 
-    assert calls == ["prepare", "env", "handle"]
+    assert calls == ["prepare", "choose", "handle"]
 
 
 def test_desktop_entry_can_run_as_top_level_script() -> None:
@@ -322,8 +394,9 @@ def test_run_streamlit_server_prepares_runtime_builds_env_and_launches(tmp_path:
         assert runtime_paths == paths
         calls.append("prepare")
 
-    def fake_build_env(runtime_paths: RuntimePaths, existing_env=None):
+    def fake_build_env(runtime_paths: RuntimePaths, existing_env=None, port=None):
         assert runtime_paths == paths
+        assert port is None
         calls.append("env")
         return {"PATH": "child-path", "VIDEO2PROMPT_STREAMLIT_PORT": str(APP_PORT)}
 

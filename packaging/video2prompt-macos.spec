@@ -69,10 +69,12 @@ coll = COLLECT(
 
 app = BUNDLE(
     coll,
-    name="video2prompt.app",
+    name="视频分析.app",
     icon=os.path.join(ROOT_DIR, "icon.icns"),
     bundle_identifier="com.video2prompt.app",
     info_plist={
+        "CFBundleDisplayName": "视频分析",
+        "CFBundleName": "视频分析",
         "LSUIElement": True,
     },
 )

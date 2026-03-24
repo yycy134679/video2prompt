@@ -6,6 +6,8 @@ DIST_DIR="$ROOT_DIR/dist"
 BUILD_DIR="$ROOT_DIR/build"
 SPEC_FILE="$ROOT_DIR/packaging/video2prompt-macos.spec"
 FFPROBE_BIN="$ROOT_DIR/packaging/bin/ffprobe"
+APP_BUNDLE_NAME="视频分析.app"
+ZIP_NAME="视频分析-macos.zip"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
 
 if [ -x "$ROOT_DIR/.venv/bin/python" ]; then
@@ -43,12 +45,12 @@ fi
 rm -rf "$BUILD_DIR" "$DIST_DIR"
 "$PYTHON_BIN" -m PyInstaller "$SPEC_FILE" --noconfirm
 
-if [ ! -d "$DIST_DIR/video2prompt.app" ]; then
-  echo "构建失败，未生成 $DIST_DIR/video2prompt.app" >&2
+if [ ! -d "$DIST_DIR/$APP_BUNDLE_NAME" ]; then
+  echo "构建失败，未生成 $DIST_DIR/$APP_BUNDLE_NAME" >&2
   exit 1
 fi
 
-ditto -c -k --sequesterRsrc --keepParent "$DIST_DIR/video2prompt.app" "$DIST_DIR/video2prompt-macos.zip"
+ditto -c -k --sequesterRsrc --keepParent "$DIST_DIR/$APP_BUNDLE_NAME" "$DIST_DIR/$ZIP_NAME"
 
-echo "构建完成: $DIST_DIR/video2prompt.app"
-echo "分发包: $DIST_DIR/video2prompt-macos.zip"
+echo "构建完成: $DIST_DIR/$APP_BUNDLE_NAME"
+echo "分发包: $DIST_DIR/$ZIP_NAME"

@@ -193,12 +193,6 @@ def resolve_output_format_for_mode(
 ) -> str:
     if app_mode == AppMode.TRANSLATION_COMPLIANCE:
         return OUTPUT_FORMAT_JSON
-    saved_output_format = session_state.get(SESSION_VIDEO_PROMPT_OUTPUT_FORMAT)
-    if saved_output_format in OUTPUT_FORMAT_VALUE_TO_LABEL:
-        return str(saved_output_format)
-    current_output_format = session_state.get("output_format", OUTPUT_FORMAT_PLAIN_TEXT)
-    if current_output_format in OUTPUT_FORMAT_VALUE_TO_LABEL:
-        return str(current_output_format)
     return OUTPUT_FORMAT_PLAIN_TEXT
 
 
@@ -258,7 +252,7 @@ def resolve_prompt_setting_key(app_mode: AppMode) -> str:
 
 
 def should_persist_output_format(app_mode: AppMode) -> bool:
-    return app_mode in {AppMode.VIDEO_PROMPT, AppMode.CATEGORY_ANALYSIS}
+    return False
 
 
 def build_persist_operations(
@@ -889,15 +883,7 @@ def main() -> None:
             )
         )
     if SESSION_VIDEO_PROMPT_OUTPUT_FORMAT not in st.session_state:
-        saved_output_format = asyncio.run(
-            cache.load_setting(SETTING_VIDEO_PROMPT_OUTPUT_FORMAT)
-        )
-        if saved_output_format in OUTPUT_FORMAT_VALUE_TO_LABEL:
-            st.session_state[SESSION_VIDEO_PROMPT_OUTPUT_FORMAT] = saved_output_format
-        else:
-            st.session_state[SESSION_VIDEO_PROMPT_OUTPUT_FORMAT] = (
-                OUTPUT_FORMAT_PLAIN_TEXT
-            )
+        st.session_state[SESSION_VIDEO_PROMPT_OUTPUT_FORMAT] = OUTPUT_FORMAT_PLAIN_TEXT
     if "output_format" not in st.session_state:
         st.session_state["output_format"] = str(
             st.session_state[SESSION_VIDEO_PROMPT_OUTPUT_FORMAT]
@@ -1007,26 +993,10 @@ def main() -> None:
                     index=reasoning_options.index(current_reasoning),
                 )
         else:
-            current_output_format = resolve_output_format_for_mode(
-                app_mode, st.session_state
-            )
-            current_output_label = OUTPUT_FORMAT_VALUE_TO_LABEL.get(
-                current_output_format, "纯文本（默认）"
-            )
-            output_format_label = st.selectbox(
-                "输出格式",
-                options=list(OUTPUT_FORMAT_LABEL_TO_VALUE.keys()),
-                index=list(OUTPUT_FORMAT_LABEL_TO_VALUE.keys()).index(
-                    current_output_label
-                ),
-                help="纯文本会保留模型原始输出；JSON 会按现有规则解析为“能否翻译+信息摘要”。",
-            )
-            output_format = OUTPUT_FORMAT_LABEL_TO_VALUE[output_format_label]
+            output_format = OUTPUT_FORMAT_PLAIN_TEXT
             st.session_state["output_format"] = output_format
             st.session_state[SESSION_VIDEO_PROMPT_OUTPUT_FORMAT] = output_format
-            asyncio.run(
-                cache.save_setting(SETTING_VIDEO_PROMPT_OUTPUT_FORMAT, output_format)
-            )
+            st.caption("除翻译合规判断外，其余模式固定使用纯文本输出。")
             col1, col2 = st.columns(2)
             with col1:
                 runtime_overrides["parser.concurrency"] = st.number_input(
