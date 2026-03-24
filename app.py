@@ -680,12 +680,23 @@ def _duration_checker_thread_entry(
 
 def _resolve_last_mode() -> AppMode:
     last_mode_value = str(
-        st.session_state.get("last_app_mode", AppMode.VIDEO_PROMPT.value)
+        st.session_state.get("last_app_mode", AppMode.TRANSLATION_COMPLIANCE.value)
     )
     try:
         return AppMode(last_mode_value)
     except ValueError:
         return AppMode.VIDEO_PROMPT
+
+
+def _normalize_app_mode_session_state(session_state: MutableMapping[Any, Any]) -> str:
+    current_mode = str(
+        session_state.get("app_mode", AppMode.TRANSLATION_COMPLIANCE.value)
+    )
+    valid_modes = {mode.value for mode in AppMode}
+    if current_mode not in valid_modes:
+        current_mode = AppMode.TRANSLATION_COMPLIANCE.value
+    session_state["app_mode"] = current_mode
+    return current_mode
 
 
 def _render_runtime_panel(controller: RunController | None) -> None:
@@ -808,10 +819,6 @@ def _render_cookie_panel(user_state_store: UserStateStore, tasks: list[Task]) ->
         else:
             st.success("状态：已保存 Cookie（未验证）")
 
-        st.caption(f"本地保存位置：{user_state_store.path}")
-        st.caption(
-            "Cookie 仅保存在当前用户目录，不会写回 config.yaml，也不会写入 SQLite 缓存。"
-        )
         st.text_area(
             "手动粘贴抖音 Cookie",
             key="douyin_cookie_input",
@@ -889,7 +896,7 @@ def main() -> None:
             st.session_state[SESSION_VIDEO_PROMPT_OUTPUT_FORMAT]
         )
     if "app_mode" not in st.session_state:
-        st.session_state["app_mode"] = AppMode.VIDEO_PROMPT.value
+        st.session_state["app_mode"] = AppMode.TRANSLATION_COMPLIANCE.value
     if SESSION_EXCEL_DOWNLOAD not in st.session_state:
         st.session_state[SESSION_EXCEL_DOWNLOAD] = None
     if SESSION_MARKDOWN_DOWNLOAD not in st.session_state:
@@ -903,21 +910,13 @@ def main() -> None:
     if SESSION_COOKIE_FAILURE not in st.session_state:
         st.session_state[SESSION_COOKIE_FAILURE] = False
 
-    st.caption(
-        "当前模型服务商：volcengine "
-        f"（endpoint_id={base_config.volcengine.endpoint_id}，input_mode={base_config.volcengine.input_mode}）"
-    )
-
     app_mode_options = [mode.value for mode in AppMode]
-    current_mode = str(st.session_state.get("app_mode", AppMode.VIDEO_PROMPT.value))
-    if current_mode not in app_mode_options:
-        current_mode = AppMode.VIDEO_PROMPT.value
+    _normalize_app_mode_session_state(st.session_state)
     selected_mode = st.selectbox(
         "运行模式",
         options=app_mode_options,
-        index=app_mode_options.index(current_mode),
+        key="app_mode",
     )
-    st.session_state["app_mode"] = selected_mode
     app_mode = AppMode(selected_mode)
     st.session_state["output_format"] = resolve_output_format_for_mode(
         app_mode, st.session_state
@@ -932,16 +931,10 @@ def main() -> None:
 
     runtime_overrides: dict[str, Any] = {}
     output_format = OUTPUT_FORMAT_PLAIN_TEXT
-    with st.expander(
-        "运行时配置覆盖（仅本次运行生效，不写回 config.yaml）", expanded=False
-    ):
-        st.caption(
-            "页面仅保留常用运行参数；退避、熔断、批量 Chat、完成后等待等高级项请在 config.yaml 中调整。"
-        )
+    with st.expander("高级设置", expanded=False):
         if app_mode == AppMode.DURATION_CHECK:
-            st.caption("时长判断模式仅使用解析与时长探测，不会调用模型。")
             runtime_overrides["parser.concurrency"] = st.number_input(
-                "解析并发数（parser.concurrency）",
+                "解析并发数",
                 min_value=1,
                 max_value=50,
                 value=base_config.parser.concurrency,
@@ -950,18 +943,17 @@ def main() -> None:
         elif app_mode == AppMode.TRANSLATION_COMPLIANCE:
             output_format = OUTPUT_FORMAT_JSON
             st.session_state["output_format"] = output_format
-            st.caption("翻译合规判断模式固定使用 JSON 输出。")
             col1, col2 = st.columns(2)
             with col1:
                 runtime_overrides["parser.concurrency"] = st.number_input(
-                    "解析并发数（parser.concurrency）",
+                    "解析并发数",
                     min_value=1,
                     max_value=50,
                     value=base_config.parser.concurrency,
                     step=1,
                 )
                 runtime_overrides["volcengine.video_fps"] = st.number_input(
-                    "模型视频采样帧率（volcengine.video_fps）",
+                    "视频采样帧率",
                     min_value=0.2,
                     max_value=5.0,
                     value=float(base_config.volcengine.video_fps),
@@ -975,7 +967,7 @@ def main() -> None:
                 if current_thinking not in thinking_options:
                     current_thinking = "enabled"
                 runtime_overrides["volcengine.thinking_type"] = st.selectbox(
-                    "思考模式（volcengine.thinking_type）",
+                    "思考模式",
                     options=thinking_options,
                     index=thinking_options.index(current_thinking),
                 )
@@ -988,7 +980,7 @@ def main() -> None:
                 if current_reasoning not in reasoning_options:
                     current_reasoning = "medium"
                 runtime_overrides["volcengine.reasoning_effort"] = st.selectbox(
-                    "思考强度（volcengine.reasoning_effort）",
+                    "思考强度",
                     options=reasoning_options,
                     index=reasoning_options.index(current_reasoning),
                 )
@@ -996,18 +988,17 @@ def main() -> None:
             output_format = OUTPUT_FORMAT_PLAIN_TEXT
             st.session_state["output_format"] = output_format
             st.session_state[SESSION_VIDEO_PROMPT_OUTPUT_FORMAT] = output_format
-            st.caption("除翻译合规判断外，其余模式固定使用纯文本输出。")
             col1, col2 = st.columns(2)
             with col1:
                 runtime_overrides["parser.concurrency"] = st.number_input(
-                    "解析并发数（parser.concurrency）",
+                    "解析并发数",
                     min_value=1,
                     max_value=50,
                     value=base_config.parser.concurrency,
                     step=1,
                 )
                 runtime_overrides["volcengine.video_fps"] = st.number_input(
-                    "模型视频采样帧率（volcengine.video_fps）",
+                    "视频采样帧率",
                     min_value=0.2,
                     max_value=5.0,
                     value=float(base_config.volcengine.video_fps),
@@ -1021,7 +1012,7 @@ def main() -> None:
                 if current_thinking not in thinking_options:
                     current_thinking = "enabled"
                 runtime_overrides["volcengine.thinking_type"] = st.selectbox(
-                    "思考模式（volcengine.thinking_type）",
+                    "思考模式",
                     options=thinking_options,
                     index=thinking_options.index(current_thinking),
                 )
@@ -1034,14 +1025,14 @@ def main() -> None:
                 if current_reasoning not in reasoning_options:
                     current_reasoning = "medium"
                 runtime_overrides["volcengine.reasoning_effort"] = st.selectbox(
-                    "思考强度（volcengine.reasoning_effort）",
+                    "思考强度",
                     options=reasoning_options,
                     index=reasoning_options.index(current_reasoning),
                 )
 
     default_user_prompt = ""
     if app_mode != AppMode.DURATION_CHECK:
-        st.subheader("视频解析提示词配置")
+        st.subheader("提示词设置")
         current_prompt_value = resolve_mode_prompt(
             app_mode,
             st.session_state,
@@ -1054,12 +1045,12 @@ def main() -> None:
             else "video_prompt_input"
         )
         default_user_prompt = st.text_area(
-            "DEFAULT_USER_PROMPT",
+            "提示词内容",
             value=current_prompt_value,
             height=180,
             key=prompt_widget_key,
         )
-        if st.button("保存 DEFAULT_USER_PROMPT"):
+        if st.button("保存提示词"):
             resolved_settings = build_run_settings(
                 app_mode,
                 default_user_prompt,
@@ -1079,9 +1070,9 @@ def main() -> None:
                 resolved_settings.output_format,
             ):
                 asyncio.run(cache.save_setting(setting_key, setting_value))
-            st.success("DEFAULT_USER_PROMPT 已保存")
+            st.success("提示词已保存")
     else:
-        st.caption("当前模式不使用模型提示词。")
+        pass
 
     category_text = ""
     if app_mode == AppMode.CATEGORY_ANALYSIS:

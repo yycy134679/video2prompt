@@ -1,6 +1,8 @@
 from pathlib import Path
 import sys
 
+from streamlit.testing.v1 import AppTest
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from app import (
@@ -28,6 +30,10 @@ from video2prompt.models import AppMode
 
 def test_translation_compliance_mode_value() -> None:
     assert AppMode.TRANSLATION_COMPLIANCE.value == "翻译合规判断"
+
+
+def test_translation_compliance_mode_is_listed_first() -> None:
+    assert list(AppMode)[0] == AppMode.TRANSLATION_COMPLIANCE
 
 
 def test_translation_compliance_mode_forces_json_output_format() -> None:
@@ -226,3 +232,83 @@ def test_build_controller_payload_uses_resolved_run_settings() -> None:
     assert payload["app_mode_value"] == "翻译合规判断"
     assert payload["default_user_prompt"] == "合规模板"
     assert payload["output_format"] == OUTPUT_FORMAT_JSON
+
+
+def test_switching_from_category_mode_back_to_video_prompt_takes_effect_immediately() -> (
+    None
+):
+    app_path = Path(__file__).resolve().parents[1] / "app.py"
+    at = AppTest.from_file(str(app_path))
+
+    at.run(timeout=10)
+    at.selectbox[0].set_value(AppMode.CATEGORY_ANALYSIS.value)
+    at.run(timeout=10)
+
+    assert at.selectbox[0].value == AppMode.CATEGORY_ANALYSIS.value
+    assert any(
+        text_area.label == "类目列表（每行一个）" for text_area in at.text_area
+    )
+
+    at.selectbox[0].set_value(AppMode.VIDEO_PROMPT.value)
+    at.run(timeout=10)
+
+    assert at.selectbox[0].value == AppMode.VIDEO_PROMPT.value
+    assert not any(
+        text_area.label == "类目列表（每行一个）" for text_area in at.text_area
+    )
+
+
+def test_app_starts_with_translation_compliance_as_default_mode() -> None:
+    app_path = Path(__file__).resolve().parents[1] / "app.py"
+    at = AppTest.from_file(str(app_path))
+
+    at.run(timeout=10)
+
+    assert at.selectbox[0].options[0] == AppMode.TRANSLATION_COMPLIANCE.value
+    assert at.selectbox[0].value == AppMode.TRANSLATION_COMPLIANCE.value
+
+
+def test_app_hides_technical_copy_for_business_users() -> None:
+    app_path = Path(__file__).resolve().parents[1] / "app.py"
+    at = AppTest.from_file(str(app_path))
+
+    at.run(timeout=10)
+
+    captions = [caption.value for caption in at.caption]
+    expander_labels = [expander.label for expander in at.expander]
+
+    assert not any("当前模型服务商" in caption for caption in captions)
+    assert not any("本地保存位置" in caption for caption in captions)
+    assert not any("Cookie 仅保存在当前用户目录" in caption for caption in captions)
+    assert not any("页面仅保留常用运行参数" in caption for caption in captions)
+    assert not any("固定使用 JSON 输出" in caption for caption in captions)
+    assert "高级设置" in expander_labels
+    assert not any("仅本次运行生效，不写回 config.yaml" in label for label in expander_labels)
+
+
+def test_app_uses_business_friendly_labels_for_settings_and_prompt_editor() -> None:
+    app_path = Path(__file__).resolve().parents[1] / "app.py"
+    at = AppTest.from_file(str(app_path))
+
+    at.run(timeout=10)
+
+    subheaders = [subheader.value for subheader in at.subheader]
+    text_area_labels = [text_area.label for text_area in at.text_area]
+    number_input_labels = [number_input.label for number_input in at.number_input]
+    selectbox_labels = [selectbox.label for selectbox in at.selectbox]
+    button_labels = [button.label for button in at.button]
+
+    assert "提示词设置" in subheaders
+    assert "视频解析提示词配置" not in subheaders
+    assert "提示词内容" in text_area_labels
+    assert "DEFAULT_USER_PROMPT" not in text_area_labels
+    assert "保存提示词" in button_labels
+    assert "保存 DEFAULT_USER_PROMPT" not in button_labels
+    assert "解析并发数" in number_input_labels
+    assert not any("parser.concurrency" in label for label in number_input_labels)
+    assert "视频采样帧率" in number_input_labels
+    assert not any("volcengine.video_fps" in label for label in number_input_labels)
+    assert "思考模式" in selectbox_labels
+    assert not any("volcengine.thinking_type" in label for label in selectbox_labels)
+    assert "思考强度" in selectbox_labels
+    assert not any("volcengine.reasoning_effort" in label for label in selectbox_labels)

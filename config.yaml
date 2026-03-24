@@ -7,7 +7,7 @@ volcengine:
   # 火山请求超时时间（秒）
   timeout_seconds: 300
   # 视频采样帧率（video_url 模式有效，范围 0.2-5）
-  video_fps: 2.0
+  video_fps: 1.0
   # 思考模式（enabled/disabled/auto）
   thinking_type: "enabled"
   # 思考强度（minimal/low/medium/high）
