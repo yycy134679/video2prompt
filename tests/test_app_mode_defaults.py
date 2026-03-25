@@ -5,16 +5,20 @@ from streamlit.testing.v1 import AppTest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
+import app
+
 from app import (
     OUTPUT_FORMAT_JSON,
     OUTPUT_FORMAT_PLAIN_TEXT,
     ResolvedRunSettings,
+    SESSION_CATEGORY_ANALYSIS_PROMPT,
     SESSION_TRANSLATION_COMPLIANCE_PROMPT,
     SESSION_VIDEO_PROMPT,
     SESSION_VIDEO_PROMPT_OUTPUT_FORMAT,
     build_persist_operations,
     build_controller_payload,
     build_run_settings,
+    choose_category_prompt_initial_value,
     choose_translation_prompt_initial_value,
     choose_video_prompt_initial_value,
     load_prompt_template,
@@ -26,6 +30,50 @@ from app import (
 )
 from video2prompt.review_result import DEFAULT_REVIEW_PROMPT
 from video2prompt.models import AppMode
+
+
+def _repo_root() -> Path:
+    return Path(__file__).resolve().parents[1]
+
+
+def _reset_cache_db() -> None:
+    cache_db = _repo_root() / "data" / "cache.db"
+    if cache_db.exists():
+        cache_db.unlink()
+
+
+def _new_app_test() -> AppTest:
+    _reset_cache_db()
+    return AppTest.from_file(str(_repo_root() / "app.py"))
+
+
+def _text_area_by_label(at: AppTest, label: str):
+    for text_area in at.text_area:
+        if text_area.label == label:
+            return text_area
+    raise AssertionError(f"未找到文本框: {label}")
+
+
+def _button_by_label(at: AppTest, label: str):
+    for button in at.button:
+        if button.label == label:
+            return button
+    raise AssertionError(f"未找到按钮: {label}")
+
+
+def _button_labels(at: AppTest) -> list[str]:
+    return [button.label for button in at.button]
+
+
+def _default_video_prompt() -> str:
+    return app.load_prompt_template(app.resolve_runtime_files().video_prompt_template_path, "")
+
+
+def _default_category_prompt() -> str:
+    return app.load_prompt_template(
+        app.resolve_runtime_files().category_prompt_template_path,
+        "",
+    )
 
 
 def test_translation_compliance_mode_value() -> None:
@@ -74,6 +122,7 @@ def test_category_mode_always_uses_plain_text_output_format() -> None:
 def test_resolve_mode_prompt_reads_independent_session_keys() -> None:
     session_state = {
         SESSION_VIDEO_PROMPT: "普通模式提示词",
+        SESSION_CATEGORY_ANALYSIS_PROMPT: "类目模式提示词",
         SESSION_TRANSLATION_COMPLIANCE_PROMPT: "合规模式提示词",
     }
 
@@ -82,15 +131,27 @@ def test_resolve_mode_prompt_reads_independent_session_keys() -> None:
             AppMode.VIDEO_PROMPT,
             session_state,
             video_prompt_default="普通模式默认提示词",
+            category_prompt_default="类目模式默认提示词",
             translation_prompt_default="合规模式默认提示词",
         )
         == "普通模式提示词"
     )
     assert (
         resolve_mode_prompt(
+            AppMode.CATEGORY_ANALYSIS,
+            session_state,
+            video_prompt_default="普通模式默认提示词",
+            category_prompt_default="类目模式默认提示词",
+            translation_prompt_default="合规模式默认提示词",
+        )
+        == "类目模式提示词"
+    )
+    assert (
+        resolve_mode_prompt(
             AppMode.TRANSLATION_COMPLIANCE,
             session_state,
             video_prompt_default="普通模式默认提示词",
+            category_prompt_default="类目模式默认提示词",
             translation_prompt_default="合规模式默认提示词",
         )
         == "合规模式提示词"
@@ -105,15 +166,27 @@ def test_resolve_mode_prompt_falls_back_to_mode_specific_default() -> None:
             AppMode.VIDEO_PROMPT,
             session_state,
             video_prompt_default="普通模式默认提示词",
+            category_prompt_default="类目模式默认提示词",
             translation_prompt_default="合规模式默认提示词",
         )
         == "普通模式默认提示词"
     )
     assert (
         resolve_mode_prompt(
+            AppMode.CATEGORY_ANALYSIS,
+            session_state,
+            video_prompt_default="普通模式默认提示词",
+            category_prompt_default="类目模式默认提示词",
+            translation_prompt_default="合规模式默认提示词",
+        )
+        == "类目模式默认提示词"
+    )
+    assert (
+        resolve_mode_prompt(
             AppMode.TRANSLATION_COMPLIANCE,
             session_state,
             video_prompt_default="普通模式默认提示词",
+            category_prompt_default="类目模式默认提示词",
             translation_prompt_default="合规模式默认提示词",
         )
         == "合规模式默认提示词"
@@ -157,10 +230,16 @@ def test_choose_translation_prompt_initial_value_prefers_saved_then_doc() -> Non
     assert choose_translation_prompt_initial_value("", "doc") == "doc"
 
 
+def test_choose_category_prompt_initial_value_prefers_saved_then_doc() -> None:
+    assert choose_category_prompt_initial_value("saved", "doc") == "saved"
+    assert choose_category_prompt_initial_value("", "doc") == "doc"
+
+
 def test_resolve_prompt_setting_key_matches_mode() -> None:
     assert resolve_prompt_setting_key(AppMode.VIDEO_PROMPT) == "prompt.video_prompt"
     assert (
-        resolve_prompt_setting_key(AppMode.CATEGORY_ANALYSIS) == "prompt.video_prompt"
+        resolve_prompt_setting_key(AppMode.CATEGORY_ANALYSIS)
+        == "prompt.category_analysis"
     )
     assert (
         resolve_prompt_setting_key(AppMode.TRANSLATION_COMPLIANCE)
@@ -194,11 +273,22 @@ def test_build_persist_operations_for_video_mode_only_writes_prompt() -> None:
     assert operations == [("prompt.video_prompt", "video")]
 
 
+def test_build_persist_operations_for_category_mode_only_writes_prompt() -> None:
+    operations = build_persist_operations(
+        app_mode=AppMode.CATEGORY_ANALYSIS,
+        prompt_text="category",
+        output_format=OUTPUT_FORMAT_JSON,
+    )
+
+    assert operations == [("prompt.category_analysis", "category")]
+
+
 def test_build_run_settings_uses_normalized_prompt_for_translation_mode() -> None:
     settings = build_run_settings(
         app_mode=AppMode.TRANSLATION_COMPLIANCE,
         prompt_text="   ",
         video_prompt_default="视频模板",
+        category_prompt_default="类目模板",
         translation_prompt_default="合规模板",
         session_state={SESSION_VIDEO_PROMPT_OUTPUT_FORMAT: OUTPUT_FORMAT_PLAIN_TEXT},
     )
@@ -212,12 +302,27 @@ def test_build_run_settings_uses_plain_text_output_format_for_video_mode() -> No
         app_mode=AppMode.VIDEO_PROMPT,
         prompt_text="自定义提示词",
         video_prompt_default="视频模板",
+        category_prompt_default="类目模板",
         translation_prompt_default="合规模板",
         session_state={SESSION_VIDEO_PROMPT_OUTPUT_FORMAT: OUTPUT_FORMAT_JSON},
     )
 
     assert settings.output_format == OUTPUT_FORMAT_PLAIN_TEXT
     assert settings.prompt_text == "自定义提示词"
+
+
+def test_build_run_settings_uses_category_default_for_empty_prompt() -> None:
+    settings = build_run_settings(
+        app_mode=AppMode.CATEGORY_ANALYSIS,
+        prompt_text="   ",
+        video_prompt_default="视频模板",
+        category_prompt_default="类目模板",
+        translation_prompt_default="合规模板",
+        session_state={SESSION_VIDEO_PROMPT_OUTPUT_FORMAT: OUTPUT_FORMAT_JSON},
+    )
+
+    assert settings.output_format == OUTPUT_FORMAT_PLAIN_TEXT
+    assert settings.prompt_text == "类目模板"
 
 
 def test_build_controller_payload_uses_resolved_run_settings() -> None:
@@ -237,8 +342,7 @@ def test_build_controller_payload_uses_resolved_run_settings() -> None:
 def test_switching_from_category_mode_back_to_video_prompt_takes_effect_immediately() -> (
     None
 ):
-    app_path = Path(__file__).resolve().parents[1] / "app.py"
-    at = AppTest.from_file(str(app_path))
+    at = _new_app_test()
 
     at.run(timeout=10)
     at.selectbox[0].set_value(AppMode.CATEGORY_ANALYSIS.value)
@@ -259,8 +363,7 @@ def test_switching_from_category_mode_back_to_video_prompt_takes_effect_immediat
 
 
 def test_app_starts_with_translation_compliance_as_default_mode() -> None:
-    app_path = Path(__file__).resolve().parents[1] / "app.py"
-    at = AppTest.from_file(str(app_path))
+    at = _new_app_test()
 
     at.run(timeout=10)
 
@@ -269,8 +372,7 @@ def test_app_starts_with_translation_compliance_as_default_mode() -> None:
 
 
 def test_app_hides_technical_copy_for_business_users() -> None:
-    app_path = Path(__file__).resolve().parents[1] / "app.py"
-    at = AppTest.from_file(str(app_path))
+    at = _new_app_test()
 
     at.run(timeout=10)
 
@@ -287,8 +389,7 @@ def test_app_hides_technical_copy_for_business_users() -> None:
 
 
 def test_app_uses_business_friendly_labels_for_settings_and_prompt_editor() -> None:
-    app_path = Path(__file__).resolve().parents[1] / "app.py"
-    at = AppTest.from_file(str(app_path))
+    at = _new_app_test()
 
     at.run(timeout=10)
 
@@ -312,3 +413,125 @@ def test_app_uses_business_friendly_labels_for_settings_and_prompt_editor() -> N
     assert not any("volcengine.thinking_type" in label for label in selectbox_labels)
     assert "思考强度" in selectbox_labels
     assert not any("volcengine.reasoning_effort" in label for label in selectbox_labels)
+
+
+def test_switching_to_category_mode_shows_category_prompt_content() -> None:
+    at = _new_app_test()
+
+    at.run(timeout=10)
+    at.selectbox[0].set_value(AppMode.VIDEO_PROMPT.value)
+    at.run(timeout=10)
+    _text_area_by_label(at, "提示词内容").set_value("视频模式保存值")
+    _button_by_label(at, "保存提示词").click()
+    at.run(timeout=10)
+
+    at.selectbox[0].set_value(AppMode.CATEGORY_ANALYSIS.value)
+    at.run(timeout=10)
+
+    assert _text_area_by_label(at, "提示词内容").value != "视频模式保存值"
+
+
+def test_video_and_category_prompt_saved_values_remain_independent() -> None:
+    at = _new_app_test()
+
+    at.run(timeout=10)
+    at.selectbox[0].set_value(AppMode.VIDEO_PROMPT.value)
+    at.run(timeout=10)
+    _text_area_by_label(at, "提示词内容").set_value("视频模式保存值")
+    _button_by_label(at, "保存提示词").click()
+    at.run(timeout=10)
+
+    at.selectbox[0].set_value(AppMode.CATEGORY_ANALYSIS.value)
+    at.run(timeout=10)
+    _text_area_by_label(at, "提示词内容").set_value("类目模式保存值")
+    _button_by_label(at, "保存提示词").click()
+    at.run(timeout=10)
+
+    at.selectbox[0].set_value(AppMode.VIDEO_PROMPT.value)
+    at.run(timeout=10)
+    assert _text_area_by_label(at, "提示词内容").value == "视频模式保存值"
+
+    at.selectbox[0].set_value(AppMode.CATEGORY_ANALYSIS.value)
+    at.run(timeout=10)
+    assert _text_area_by_label(at, "提示词内容").value == "类目模式保存值"
+
+
+def test_reset_default_prompt_only_resets_current_mode() -> None:
+    at = _new_app_test()
+
+    at.run(timeout=10)
+    at.selectbox[0].set_value(AppMode.CATEGORY_ANALYSIS.value)
+    at.run(timeout=10)
+    _text_area_by_label(at, "提示词内容").set_value("类目模式保存值")
+    _button_by_label(at, "保存提示词").click()
+    at.run(timeout=10)
+
+    at.selectbox[0].set_value(AppMode.VIDEO_PROMPT.value)
+    at.run(timeout=10)
+    _text_area_by_label(at, "提示词内容").set_value("视频模式保存值")
+    _button_by_label(at, "保存提示词").click()
+    at.run(timeout=10)
+    _button_by_label(at, "恢复默认提示词").click()
+    at.run(timeout=10)
+
+    assert _text_area_by_label(at, "提示词内容").value == _default_video_prompt()
+
+    at.selectbox[0].set_value(AppMode.CATEGORY_ANALYSIS.value)
+    at.run(timeout=10)
+    assert _text_area_by_label(at, "提示词内容").value == "类目模式保存值"
+
+
+def test_unsaved_prompt_draft_is_discarded_after_switching_modes() -> None:
+    at = _new_app_test()
+
+    at.run(timeout=10)
+    at.selectbox[0].set_value(AppMode.VIDEO_PROMPT.value)
+    at.run(timeout=10)
+    _text_area_by_label(at, "提示词内容").set_value("视频模式已保存值")
+    _button_by_label(at, "保存提示词").click()
+    at.run(timeout=10)
+    _text_area_by_label(at, "提示词内容").set_value("视频模式未保存草稿")
+    at.run(timeout=10)
+
+    at.selectbox[0].set_value(AppMode.CATEGORY_ANALYSIS.value)
+    at.run(timeout=10)
+    at.selectbox[0].set_value(AppMode.VIDEO_PROMPT.value)
+    at.run(timeout=10)
+
+    assert _text_area_by_label(at, "提示词内容").value == "视频模式已保存值"
+
+
+def test_start_run_uses_current_prompt_input_without_saving() -> None:
+    settings = build_run_settings(
+        app_mode=AppMode.VIDEO_PROMPT,
+        prompt_text="未保存直接运行提示词",
+        video_prompt_default="视频模板",
+        category_prompt_default="类目模板",
+        translation_prompt_default="合规模板",
+        session_state={
+            SESSION_VIDEO_PROMPT: "已保存提示词",
+            SESSION_VIDEO_PROMPT_OUTPUT_FORMAT: OUTPUT_FORMAT_PLAIN_TEXT,
+        },
+    )
+
+    assert settings.prompt_text == "未保存直接运行提示词"
+
+
+def test_translation_mode_does_not_show_reset_default_prompt_button() -> None:
+    at = _new_app_test()
+
+    at.run(timeout=10)
+
+    assert "保存提示词" in _button_labels(at)
+    assert "恢复默认提示词" not in _button_labels(at)
+
+
+def test_duration_mode_hides_prompt_editor() -> None:
+    at = _new_app_test()
+
+    at.run(timeout=10)
+    at.selectbox[0].set_value(AppMode.DURATION_CHECK.value)
+    at.run(timeout=10)
+
+    assert "提示词设置" not in [subheader.value for subheader in at.subheader]
+    assert not any(text_area.label == "提示词内容" for text_area in at.text_area)

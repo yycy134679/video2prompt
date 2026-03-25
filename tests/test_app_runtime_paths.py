@@ -31,6 +31,7 @@ def test_resolve_runtime_files_builds_template_paths_from_resource_root(tmp_path
     runtime_files = app.resolve_runtime_files(env)
 
     assert runtime_files.video_prompt_template_path == tmp_path / "bundle" / "docs" / "视频复刻提示词.md"
+    assert runtime_files.category_prompt_template_path == tmp_path / "bundle" / "docs" / "视频脚本拆解分析.md"
     assert runtime_files.translation_template_path == tmp_path / "bundle" / "docs" / "视频内容审查.md"
     assert runtime_files.excel_template_path == tmp_path / "bundle" / "docs" / "product_prompt_template.xlsx"
     assert runtime_files.ffprobe_path == tmp_path / "bundle" / "bin" / "ffprobe"
@@ -157,6 +158,7 @@ def test_build_excel_exporter_uses_runtime_template_path(tmp_path: Path) -> None
         exports_dir=tmp_path / "support" / "exports",
         ffprobe_path=tmp_path / "bundle" / "bin" / "ffprobe",
         video_prompt_template_path=tmp_path / "bundle" / "docs" / "视频复刻提示词.md",
+        category_prompt_template_path=tmp_path / "bundle" / "docs" / "视频脚本拆解分析.md",
         translation_template_path=tmp_path / "bundle" / "docs" / "视频内容审查.md",
         excel_template_path=tmp_path / "bundle" / "docs" / "product_prompt_template.xlsx",
     )
@@ -175,6 +177,7 @@ def test_ensure_exports_dir_uses_runtime_exports_dir(tmp_path: Path) -> None:
         exports_dir=tmp_path / "support" / "exports",
         ffprobe_path=tmp_path / "bundle" / "bin" / "ffprobe",
         video_prompt_template_path=tmp_path / "bundle" / "docs" / "视频复刻提示词.md",
+        category_prompt_template_path=tmp_path / "bundle" / "docs" / "视频脚本拆解分析.md",
         translation_template_path=tmp_path / "bundle" / "docs" / "视频内容审查.md",
         excel_template_path=tmp_path / "bundle" / "docs" / "product_prompt_template.xlsx",
     )
@@ -205,6 +208,7 @@ def test_build_duration_runner_passes_runtime_ffprobe_path(monkeypatch, tmp_path
         exports_dir=tmp_path / "support" / "exports",
         ffprobe_path=tmp_path / "bundle" / "bin" / "ffprobe",
         video_prompt_template_path=tmp_path / "bundle" / "docs" / "视频复刻提示词.md",
+        category_prompt_template_path=tmp_path / "bundle" / "docs" / "视频脚本拆解分析.md",
         translation_template_path=tmp_path / "bundle" / "docs" / "视频内容审查.md",
         excel_template_path=tmp_path / "bundle" / "docs" / "product_prompt_template.xlsx",
     )

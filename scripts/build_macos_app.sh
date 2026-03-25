@@ -16,7 +16,7 @@ fi
 
 cd "$ROOT_DIR"
 
-for path in app.py config.yaml .env.example docs/product_prompt_template.xlsx docs/视频复刻提示词.md docs/视频内容审查.md; do
+for path in app.py config.yaml .env.example docs/product_prompt_template.xlsx docs/视频复刻提示词.md docs/视频脚本拆解分析.md docs/视频内容审查.md; do
   if [ ! -f "$path" ]; then
     echo "缺少构建资源: $path" >&2
     exit 1

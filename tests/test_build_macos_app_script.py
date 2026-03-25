@@ -18,3 +18,9 @@ def test_build_script_packages_video_analysis_zip() -> None:
 
     assert 'ZIP_NAME="视频分析-macos.zip"' in text
     assert '"$DIST_DIR/$ZIP_NAME"' in text
+
+
+def test_build_script_checks_category_prompt_template_resource() -> None:
+    text = SCRIPT_PATH.read_text(encoding="utf-8")
+
+    assert "docs/视频脚本拆解分析.md" in text

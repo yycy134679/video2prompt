@@ -61,9 +61,14 @@ SESSION_LAST_RUN_FINISHED = "last_run_finished"
 SESSION_LAST_RUN_CANCELLED = "last_run_cancelled"
 SESSION_LAST_RUN_ERROR_MESSAGE = "last_run_error_message"
 SESSION_VIDEO_PROMPT = "video_prompt"
+SESSION_CATEGORY_ANALYSIS_PROMPT = "category_analysis_prompt"
 SESSION_TRANSLATION_COMPLIANCE_PROMPT = "translation_compliance_prompt"
 SESSION_VIDEO_PROMPT_OUTPUT_FORMAT = "video_prompt_output_format"
+SESSION_PROMPT_EDITOR_MODE = "prompt_editor_mode"
+SESSION_PROMPT_EDITOR_REFRESH_MODE = "prompt_editor_refresh_mode"
+SESSION_PROMPT_NOTICE = "prompt_notice"
 SETTING_VIDEO_PROMPT = "prompt.video_prompt"
+SETTING_CATEGORY_ANALYSIS_PROMPT = "prompt.category_analysis"
 SETTING_TRANSLATION_COMPLIANCE_PROMPT = "prompt.translation_compliance"
 SETTING_VIDEO_PROMPT_OUTPUT_FORMAT = "output_format.video_prompt"
 @dataclass
@@ -100,6 +105,7 @@ class RuntimeFiles:
     exports_dir: Path
     ffprobe_path: Path
     video_prompt_template_path: Path
+    category_prompt_template_path: Path
     translation_template_path: Path
     excel_template_path: Path
 
@@ -125,6 +131,7 @@ def resolve_runtime_files(environ: Mapping[str, str] | None = None) -> RuntimeFi
             env.get("VIDEO2PROMPT_FFPROBE_PATH", str(resource_root / "bin" / "ffprobe"))
         ),
         video_prompt_template_path=resource_root / "docs" / "视频复刻提示词.md",
+        category_prompt_template_path=resource_root / "docs" / "视频脚本拆解分析.md",
         translation_template_path=resource_root / "docs" / "视频内容审查.md",
         excel_template_path=resource_root / "docs" / "product_prompt_template.xlsx",
     )
@@ -227,16 +234,20 @@ def resolve_mode_prompt(
     app_mode: AppMode,
     session_state: MutableMapping[str, Any],
     video_prompt_default: str,
+    category_prompt_default: str,
     translation_prompt_default: str,
 ) -> str:
-    session_key = (
-        SESSION_TRANSLATION_COMPLIANCE_PROMPT
-        if app_mode == AppMode.TRANSLATION_COMPLIANCE
-        else SESSION_VIDEO_PROMPT
-    )
+    if app_mode == AppMode.TRANSLATION_COMPLIANCE:
+        session_key = SESSION_TRANSLATION_COMPLIANCE_PROMPT
+    elif app_mode == AppMode.CATEGORY_ANALYSIS:
+        session_key = SESSION_CATEGORY_ANALYSIS_PROMPT
+    else:
+        session_key = SESSION_VIDEO_PROMPT
     prompt = session_state.get(session_key)
     if isinstance(prompt, str):
         return prompt
+    if app_mode == AppMode.CATEGORY_ANALYSIS:
+        return category_prompt_default
     if app_mode == AppMode.TRANSLATION_COMPLIANCE:
         return translation_prompt_default
     return video_prompt_default
@@ -272,7 +283,65 @@ def choose_translation_prompt_initial_value(
     return (saved_prompt or "").strip() or default_prompt
 
 
+def choose_category_prompt_initial_value(
+    saved_prompt: str | None,
+    default_prompt: str,
+) -> str:
+    return (saved_prompt or "").strip() or default_prompt
+
+
+def resolve_prompt_widget_key(app_mode: AppMode) -> str:
+    if app_mode == AppMode.TRANSLATION_COMPLIANCE:
+        return "translation_compliance_prompt_input"
+    if app_mode == AppMode.CATEGORY_ANALYSIS:
+        return "category_analysis_prompt_input"
+    return "video_prompt_input"
+
+
+def resolve_prompt_session_key(app_mode: AppMode) -> str:
+    if app_mode == AppMode.TRANSLATION_COMPLIANCE:
+        return SESSION_TRANSLATION_COMPLIANCE_PROMPT
+    if app_mode == AppMode.CATEGORY_ANALYSIS:
+        return SESSION_CATEGORY_ANALYSIS_PROMPT
+    return SESSION_VIDEO_PROMPT
+
+
+def should_show_reset_prompt_button(app_mode: AppMode) -> bool:
+    return app_mode in {AppMode.VIDEO_PROMPT, AppMode.CATEGORY_ANALYSIS}
+
+
+def sync_prompt_widget_state(
+    app_mode: AppMode,
+    session_state: MutableMapping[str, Any],
+    video_prompt_default: str,
+    category_prompt_default: str,
+    translation_prompt_default: str,
+) -> str:
+    widget_key = resolve_prompt_widget_key(app_mode)
+    mode_value = app_mode.value
+    last_mode_value = str(session_state.get(SESSION_PROMPT_EDITOR_MODE, ""))
+    refresh_mode_value = str(session_state.get(SESSION_PROMPT_EDITOR_REFRESH_MODE, ""))
+    if (
+        widget_key not in session_state
+        or last_mode_value != mode_value
+        or refresh_mode_value == mode_value
+    ):
+        session_state[widget_key] = resolve_mode_prompt(
+            app_mode,
+            session_state,
+            video_prompt_default,
+            category_prompt_default,
+            translation_prompt_default,
+        )
+    session_state[SESSION_PROMPT_EDITOR_MODE] = mode_value
+    if refresh_mode_value == mode_value:
+        session_state.pop(SESSION_PROMPT_EDITOR_REFRESH_MODE, None)
+    return widget_key
+
+
 def resolve_prompt_setting_key(app_mode: AppMode) -> str:
+    if app_mode == AppMode.CATEGORY_ANALYSIS:
+        return SETTING_CATEGORY_ANALYSIS_PROMPT
     if app_mode == AppMode.TRANSLATION_COMPLIANCE:
         return SETTING_TRANSLATION_COMPLIANCE_PROMPT
     return SETTING_VIDEO_PROMPT
@@ -297,14 +366,16 @@ def build_run_settings(
     app_mode: AppMode,
     prompt_text: str,
     video_prompt_default: str,
+    category_prompt_default: str,
     translation_prompt_default: str,
     session_state: MutableMapping[str, Any],
 ) -> ResolvedRunSettings:
-    default_prompt = (
-        translation_prompt_default
-        if app_mode == AppMode.TRANSLATION_COMPLIANCE
-        else video_prompt_default
-    )
+    if app_mode == AppMode.TRANSLATION_COMPLIANCE:
+        default_prompt = translation_prompt_default
+    elif app_mode == AppMode.CATEGORY_ANALYSIS:
+        default_prompt = category_prompt_default
+    else:
+        default_prompt = video_prompt_default
     return ResolvedRunSettings(
         prompt_text=normalize_runtime_prompt(prompt_text, default_prompt),
         output_format=resolve_output_format_for_mode(app_mode, session_state),
@@ -899,6 +970,10 @@ def main() -> None:
     asyncio.run(cache.init_db())
 
     video_prompt_template = load_prompt_template(runtime_files.video_prompt_template_path, "")
+    category_prompt_template = load_prompt_template(
+        runtime_files.category_prompt_template_path,
+        "",
+    )
     translation_prompt_template = load_prompt_template(
         runtime_files.translation_template_path,
         DEFAULT_REVIEW_PROMPT,
@@ -914,6 +989,13 @@ def main() -> None:
             choose_translation_prompt_initial_value(
                 asyncio.run(cache.load_setting(SETTING_TRANSLATION_COMPLIANCE_PROMPT)),
                 translation_prompt_template,
+            )
+        )
+    if SESSION_CATEGORY_ANALYSIS_PROMPT not in st.session_state:
+        st.session_state[SESSION_CATEGORY_ANALYSIS_PROMPT] = (
+            choose_category_prompt_initial_value(
+                asyncio.run(cache.load_setting(SETTING_CATEGORY_ANALYSIS_PROMPT)),
+                category_prompt_template,
             )
         )
     if SESSION_VIDEO_PROMPT_OUTPUT_FORMAT not in st.session_state:
@@ -1060,44 +1142,68 @@ def main() -> None:
     default_user_prompt = ""
     if app_mode != AppMode.DURATION_CHECK:
         st.subheader("提示词设置")
-        current_prompt_value = resolve_mode_prompt(
+        prompt_widget_key = sync_prompt_widget_state(
             app_mode,
             st.session_state,
             video_prompt_template,
+            category_prompt_template,
             translation_prompt_template,
         )
-        prompt_widget_key = (
-            "translation_compliance_prompt_input"
-            if app_mode == AppMode.TRANSLATION_COMPLIANCE
-            else "video_prompt_input"
-        )
+        prompt_notice = str(st.session_state.pop(SESSION_PROMPT_NOTICE, ""))
+        if prompt_notice:
+            st.success(prompt_notice)
         default_user_prompt = st.text_area(
             "提示词内容",
-            value=current_prompt_value,
             height=180,
             key=prompt_widget_key,
         )
-        if st.button("保存提示词"):
+        show_reset_button = should_show_reset_prompt_button(app_mode)
+        if show_reset_button:
+            save_col, reset_col = st.columns(2)
+            with save_col:
+                save_clicked = st.button("保存提示词", use_container_width=True)
+            with reset_col:
+                reset_clicked = st.button("恢复默认提示词", use_container_width=True)
+        else:
+            save_clicked = st.button("保存提示词")
+            reset_clicked = False
+        if save_clicked:
             resolved_settings = build_run_settings(
                 app_mode,
                 default_user_prompt,
                 video_prompt_template,
+                category_prompt_template,
                 translation_prompt_template,
                 st.session_state,
             )
-            st.session_state[
-                SESSION_TRANSLATION_COMPLIANCE_PROMPT
-                if app_mode == AppMode.TRANSLATION_COMPLIANCE
-                else SESSION_VIDEO_PROMPT
-            ] = resolved_settings.prompt_text
-            st.session_state[prompt_widget_key] = resolved_settings.prompt_text
+            session_prompt_key = resolve_prompt_session_key(app_mode)
+            st.session_state[session_prompt_key] = resolved_settings.prompt_text
+            st.session_state[SESSION_PROMPT_EDITOR_REFRESH_MODE] = app_mode.value
             for setting_key, setting_value in build_persist_operations(
                 app_mode,
                 resolved_settings.prompt_text,
                 resolved_settings.output_format,
             ):
                 asyncio.run(cache.save_setting(setting_key, setting_value))
-            st.success("提示词已保存")
+            st.session_state[SESSION_PROMPT_NOTICE] = "提示词已保存"
+            st.rerun()
+        if reset_clicked:
+            default_prompt = (
+                category_prompt_template
+                if app_mode == AppMode.CATEGORY_ANALYSIS
+                else video_prompt_template
+            )
+            session_prompt_key = resolve_prompt_session_key(app_mode)
+            st.session_state[session_prompt_key] = default_prompt
+            st.session_state[SESSION_PROMPT_EDITOR_REFRESH_MODE] = app_mode.value
+            for setting_key, setting_value in build_persist_operations(
+                app_mode,
+                default_prompt,
+                resolve_output_format_for_mode(app_mode, st.session_state),
+            ):
+                asyncio.run(cache.save_setting(setting_key, setting_value))
+            st.session_state[SESSION_PROMPT_NOTICE] = "已恢复默认提示词"
+            st.rerun()
     else:
         pass
 
@@ -1202,6 +1308,7 @@ def main() -> None:
             app_mode,
             default_user_prompt,
             video_prompt_template,
+            category_prompt_template,
             translation_prompt_template,
             st.session_state,
         )
