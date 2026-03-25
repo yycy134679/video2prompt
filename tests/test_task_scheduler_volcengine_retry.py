@@ -141,7 +141,7 @@ def _make_scheduler(
 
 def _make_volc_config(**kwargs) -> AppConfig:  # noqa: ANN003
     volc = VolcengineConfig(
-        endpoint_id="ep-test",
+        model="doubao-test-model",
         input_mode="video_url",
     )
     for key, value in kwargs.items():

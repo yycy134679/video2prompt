@@ -18,7 +18,7 @@ class VolcengineResponsesClient:
     def __init__(
         self,
         base_url: str,
-        endpoint_id: str,
+        model: str,
         api_key: str,
         timeout_seconds: int = 90,
         thinking_type: str = "enabled",
@@ -28,7 +28,7 @@ class VolcengineResponsesClient:
         http_client: httpx.AsyncClient | None = None,
     ):
         self.base_url = base_url.rstrip("/")
-        self.endpoint_id = endpoint_id.strip()
+        self.model = model.strip()
         self.api_key = api_key
         self.timeout_seconds = timeout_seconds
         self.thinking_type = (thinking_type or "").strip().lower() or "enabled"
@@ -63,7 +63,7 @@ class VolcengineResponsesClient:
 
     def _build_request_body(self, input_items: list[dict[str, Any]]) -> dict[str, Any]:
         body: dict[str, Any] = {
-            "model": self.endpoint_id,
+            "model": self.model,
             "input": input_items,
         }
         if self.thinking_type in {"enabled", "disabled", "auto"}:

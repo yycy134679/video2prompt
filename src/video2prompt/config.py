@@ -129,7 +129,9 @@ class ConfigManager:
         merged = copy.deepcopy(defaults)
         self._deep_merge(merged, data)
 
-        volcengine = VolcengineConfig(**self._as_dict(merged, "volcengine"))
+        volcengine_data = self._as_dict(merged, "volcengine")
+        volcengine_data.pop("endpoint_id", None)
+        volcengine = VolcengineConfig(**volcengine_data)
         volcengine.thinking_type = self._normalize_volc_thinking_type(volcengine.thinking_type)
         volcengine.reasoning_effort = self._normalize_volc_reasoning_effort(volcengine.reasoning_effort)
         volcengine.input_mode = self._normalize_volc_input_mode(volcengine.input_mode)
@@ -179,8 +181,8 @@ class ConfigManager:
             raise ConfigError("timeout_seconds 必须 > 0")
         if config.volcengine.timeout_seconds <= 0:
             raise ConfigError("volcengine.timeout_seconds 必须 > 0")
-        if not config.volcengine.endpoint_id.strip():
-            raise ConfigError("volcengine.endpoint_id 不能为空")
+        if not config.volcengine.model.strip():
+            raise ConfigError("volcengine.model 不能为空")
         if not (0.2 <= float(config.volcengine.video_fps) <= 5):
             raise ConfigError("volcengine.video_fps 必须在 [0.2,5] 区间")
         thinking_type = ConfigManager._normalize_volc_thinking_type(config.volcengine.thinking_type)

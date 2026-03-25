@@ -96,7 +96,7 @@ ARK_API_KEY=your_ark_api_key_here
 ```yaml
 volcengine:
   base_url: "https://ark.cn-beijing.volces.com/api/v3"
-  endpoint_id: "ep-xxxxxxxx"
+  model: "doubao-seed-1-6-250615"
   timeout_seconds: 300
   video_fps: 2.0
   thinking_type: "enabled"
@@ -106,7 +106,7 @@ volcengine:
 ```
 
 > [!IMPORTANT]
-> `volcengine.endpoint_id` 为必填项。
+> `volcengine.model` 为必填项。
 
 ### 4. 启动应用
 
@@ -177,7 +177,7 @@ python -m streamlit run app.py --server.headless=false
 
 | 配置项 | 说明 |
 | --- | --- |
-| `volcengine.endpoint_id` | 必填的火山方舟 endpoint ID |
+| `volcengine.model` | 必填的火山方舟模型 ID |
 | `volcengine.input_mode` | 只支持 `auto`、`video_url`、`file_id` |
 | `volcengine.video_fps` | 范围必须在 `0.2-5` |
 | `volcengine.files_expire_days` | 范围必须在 `1-30` |

@@ -86,6 +86,68 @@ def test_build_config_manager_passes_runtime_paths(monkeypatch, tmp_path: Path) 
     assert runtime_paths.exports_dir == tmp_path / "support" / "exports"
 
 
+def test_build_config_manager_migrates_legacy_runtime_config(monkeypatch, tmp_path: Path) -> None:
+    support_dir = tmp_path / "support"
+    support_dir.mkdir(parents=True, exist_ok=True)
+    config_path = support_dir / "config.yaml"
+    config_path.write_text(
+        'volcengine:\n  endpoint_id: "ep-test"\ncircuit_breaker:\n  model:\n    consecutive_failures: 4\n    failure_rate: 0.5\n',
+        encoding="utf-8",
+    )
+
+    class DummyConfigManager:
+        def __init__(self, env_path: str, config_path: str, runtime_paths=None):
+            self.env_path = env_path
+            self.config_path = config_path
+            self.runtime_paths = runtime_paths
+
+    monkeypatch.setattr(app, "ConfigManager", DummyConfigManager)
+
+    env = {
+        "VIDEO2PROMPT_APP_SUPPORT_DIR": str(support_dir),
+        "VIDEO2PROMPT_ENV_PATH": str(support_dir / ".env"),
+        "VIDEO2PROMPT_CONFIG_PATH": str(config_path),
+    }
+
+    app.build_config_manager(env)
+
+    migrated = config_path.read_text(encoding="utf-8")
+    assert "model:" in migrated
+    assert "endpoint_id:" not in migrated
+
+
+def test_build_config_manager_migrates_legacy_custom_config_path(monkeypatch, tmp_path: Path) -> None:
+    support_dir = tmp_path / "support"
+    custom_dir = tmp_path / "custom"
+    support_dir.mkdir(parents=True, exist_ok=True)
+    custom_dir.mkdir(parents=True, exist_ok=True)
+    config_path = custom_dir / "config.yaml"
+    config_path.write_text(
+        'volcengine:\n  endpoint_id: "ep-test"\n',
+        encoding="utf-8",
+    )
+
+    class DummyConfigManager:
+        def __init__(self, env_path: str, config_path: str, runtime_paths=None):
+            self.env_path = env_path
+            self.config_path = config_path
+            self.runtime_paths = runtime_paths
+
+    monkeypatch.setattr(app, "ConfigManager", DummyConfigManager)
+
+    env = {
+        "VIDEO2PROMPT_APP_SUPPORT_DIR": str(support_dir),
+        "VIDEO2PROMPT_ENV_PATH": str(support_dir / ".env"),
+        "VIDEO2PROMPT_CONFIG_PATH": str(config_path),
+    }
+
+    app.build_config_manager(env)
+
+    migrated = config_path.read_text(encoding="utf-8")
+    assert "model:" in migrated
+    assert "endpoint_id:" not in migrated
+
+
 def test_build_excel_exporter_uses_runtime_template_path(tmp_path: Path) -> None:
     runtime_files = app.RuntimeFiles(
         resource_root=tmp_path / "bundle",
