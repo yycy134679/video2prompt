@@ -42,7 +42,7 @@ def test_interpret_video_builds_responses_video_url_payload() -> None:
         async with httpx.AsyncClient(transport=transport) as http_client:
             client = VolcengineResponsesClient(
                 base_url="https://ark.cn-beijing.volces.com/api/v3",
-                endpoint_id="ep-test",
+                model="doubao-test-model",
                 api_key="k",
                 reasoning_effort="high",
                 max_output_tokens=512,
@@ -100,7 +100,7 @@ def test_create_response_with_file_id_success() -> None:
         async with httpx.AsyncClient(transport=transport) as http_client:
             client = VolcengineResponsesClient(
                 base_url="https://ark.cn-beijing.volces.com/api/v3",
-                endpoint_id="ep-test",
+                model="doubao-test-model",
                 api_key="k",
                 reasoning_effort="high",
                 max_output_tokens=512,
@@ -138,7 +138,7 @@ def test_create_response_stream_aggregates_text_and_usage() -> None:
         async with httpx.AsyncClient(transport=transport) as http_client:
             client = VolcengineResponsesClient(
                 base_url="https://ark.cn-beijing.volces.com/api/v3",
-                endpoint_id="ep-test",
+                model="doubao-test-model",
                 api_key="k",
                 stream=True,
                 http_client=http_client,
@@ -163,7 +163,7 @@ def test_create_response_with_file_id_empty_output() -> None:
         async with httpx.AsyncClient(transport=transport) as http_client:
             client = VolcengineResponsesClient(
                 base_url="https://ark.cn-beijing.volces.com/api/v3",
-                endpoint_id="ep-test",
+                model="doubao-test-model",
                 api_key="k",
                 http_client=http_client,
             )
@@ -182,7 +182,7 @@ def test_create_response_with_file_id_retryable() -> None:
         async with httpx.AsyncClient(transport=transport) as http_client:
             client = VolcengineResponsesClient(
                 base_url="https://ark.cn-beijing.volces.com/api/v3",
-                endpoint_id="ep-test",
+                model="doubao-test-model",
                 api_key="k",
                 http_client=http_client,
             )
@@ -195,7 +195,7 @@ def test_create_response_with_file_id_retryable() -> None:
 def test_client_uses_default_prompt_when_runtime_prompt_empty() -> None:
     client = VolcengineResponsesClient(
         base_url="https://ark.cn-beijing.volces.com/api/v3",
-        endpoint_id="ep-test",
+        model="doubao-test-model",
         api_key="k",
     )
     client.set_default_user_prompt("fallback")

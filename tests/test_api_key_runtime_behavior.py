@@ -31,7 +31,7 @@ def test_responses_client_raises_before_request_when_api_key_missing() -> None:
         async with httpx.AsyncClient(transport=transport) as http_client:
             client = VolcengineResponsesClient(
                 base_url="https://ark.cn-beijing.volces.com/api/v3",
-                endpoint_id="ep-test",
+                model="doubao-test-model",
                 api_key="",
                 http_client=http_client,
             )

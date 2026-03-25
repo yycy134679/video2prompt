@@ -15,6 +15,7 @@ from uuid import uuid4
 
 import httpx
 import streamlit as st
+import yaml
 
 from video2prompt.cache_store import CacheStore
 from video2prompt.circuit_breaker import CircuitBreaker
@@ -134,6 +135,7 @@ def build_config_manager(
     use_runtime_paths: bool = False,
 ) -> ConfigManager:
     runtime_files = resolve_runtime_files(environ)
+    migrate_legacy_runtime_config(runtime_files)
     runtime_paths = None
     if use_runtime_paths:
         runtime_paths = RuntimePaths(
@@ -149,6 +151,31 @@ def build_config_manager(
         env_path=str(runtime_files.env_path),
         config_path=str(runtime_files.config_path),
         runtime_paths=runtime_paths,
+    )
+
+
+def migrate_legacy_runtime_config(runtime_files: RuntimeFiles) -> None:
+    config_path = runtime_files.config_path
+    if not config_path.exists():
+        return
+
+    try:
+        data = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+    except yaml.YAMLError:
+        return
+
+    if not isinstance(data, dict):
+        return
+    volcengine = data.get("volcengine")
+    if not isinstance(volcengine, dict):
+        return
+    if volcengine.get("model") or "endpoint_id" not in volcengine:
+        return
+
+    volcengine["model"] = volcengine.pop("endpoint_id")
+    config_path.write_text(
+        yaml.safe_dump(data, allow_unicode=True, sort_keys=False),
+        encoding="utf-8",
     )
 
 
@@ -394,7 +421,7 @@ async def _run_scheduler(
     )
     volc_responses_client = VolcengineResponsesClient(
         base_url=config.volcengine.base_url,
-        endpoint_id=config.volcengine.endpoint_id,
+        model=config.volcengine.model,
         api_key=api_key,
         timeout_seconds=config.volcengine.timeout_seconds,
         thinking_type=config.volcengine.thinking_type,

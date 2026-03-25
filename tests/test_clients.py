@@ -19,7 +19,7 @@ from video2prompt.volcengine_responses_client import VolcengineResponsesClient
 def test_responses_build_request_body_contains_video_url_and_fps() -> None:
     client = VolcengineResponsesClient(
         base_url="https://ark.cn-beijing.volces.com/api/v3",
-        endpoint_id="ep-test",
+        model="doubao-test-model",
         api_key="x",
         reasoning_effort="high",
         max_output_tokens=256,

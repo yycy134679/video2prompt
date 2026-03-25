@@ -166,7 +166,7 @@ Current provider facts:
 
 Important config constraints:
 
-- `volcengine.endpoint_id` is required
+- `volcengine.model` is required
 - `volcengine.input_mode` supports only `auto`, `video_url`, `file_id`
 - `volcengine.video_fps` must be within `0.2-5`
 - `volcengine.files_expire_days` must be within `1-30`

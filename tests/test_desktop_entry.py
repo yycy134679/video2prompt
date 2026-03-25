@@ -185,7 +185,7 @@ def test_choose_launch_port_raises_when_no_port_available() -> None:
 def test_prepare_user_runtime_copies_config_and_bootstraps_env(tmp_path: Path) -> None:
     paths = make_paths(tmp_path)
     paths.resource_root.mkdir(parents=True, exist_ok=True)
-    (paths.resource_root / "config.yaml").write_text("volcengine:\n  endpoint_id: ep-test\n", encoding="utf-8")
+    (paths.resource_root / "config.yaml").write_text("volcengine:\n  model: doubao-test-model\n", encoding="utf-8")
     (paths.resource_root / ".env.example").write_text("VOLCENGINE_API_KEY=\n", encoding="utf-8")
 
     prepare_user_runtime(paths)

@@ -33,7 +33,7 @@ class AppMode(str, Enum):
 @dataclass
 class VolcengineConfig:
     base_url: str = "https://ark.cn-beijing.volces.com/api/v3"
-    endpoint_id: str = ""
+    model: str = ""
     timeout_seconds: int = 90
     video_fps: float = 1.0
     thinking_type: str = "enabled"
