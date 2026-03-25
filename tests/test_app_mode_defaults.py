@@ -11,8 +11,11 @@ from app import (
     OUTPUT_FORMAT_JSON,
     OUTPUT_FORMAT_PLAIN_TEXT,
     ResolvedRunSettings,
+    ResolvedAiSettings,
     SETTING_CATEGORY_ANALYSIS_PROMPT_CUSTOM_ENABLED,
     SETTING_VIDEO_PROMPT_CUSTOM_ENABLED,
+    SESSION_AI_SETTINGS_RESOLVED_API_KEY,
+    SESSION_AI_SETTINGS_RESOLVED_MODEL,
     SESSION_CATEGORY_ANALYSIS_PROMPT,
     SESSION_TRANSLATION_COMPLIANCE_PROMPT,
     SESSION_VIDEO_PROMPT,
@@ -29,6 +32,7 @@ from app import (
     resolve_output_format_for_mode,
     resolve_prompt_setting_key,
     should_persist_output_format,
+    sync_ai_settings_widget_state,
 )
 from video2prompt.review_result import DEFAULT_REVIEW_PROMPT
 from video2prompt.models import AppMode
@@ -560,3 +564,54 @@ def test_duration_mode_hides_prompt_editor() -> None:
 
     assert "提示词设置" not in [subheader.value for subheader in at.subheader]
     assert not any(text_area.label == "提示词内容" for text_area in at.text_area)
+
+
+def test_sync_ai_settings_widget_state_initializes_inputs_from_resolved_values() -> None:
+    session_state: dict[str, object] = {}
+
+    sync_ai_settings_widget_state(
+        session_state,
+        resolved=ResolvedAiSettings(api_key="api-key", model="doubao-model"),
+        has_saved_ai_settings=False,
+    )
+
+    assert session_state["volcengine_api_key_input"] == "api-key"
+    assert session_state["volcengine_model_input"] == "doubao-model"
+
+
+def test_sync_ai_settings_widget_state_resets_legacy_stale_value_without_saved_ai_settings() -> (
+    None
+):
+    session_state: dict[str, object] = {
+        "volcengine_model_input": "ep-old-model",
+        "volcengine_api_key_input": "old-api-key",
+    }
+
+    sync_ai_settings_widget_state(
+        session_state,
+        resolved=ResolvedAiSettings(api_key="", model="doubao-seed-2-0-lite-260215"),
+        has_saved_ai_settings=False,
+    )
+
+    assert session_state["volcengine_model_input"] == "doubao-seed-2-0-lite-260215"
+    assert session_state["volcengine_api_key_input"] == ""
+
+
+def test_sync_ai_settings_widget_state_preserves_manual_unsaved_input_when_marked() -> (
+    None
+):
+    session_state: dict[str, object] = {
+        "volcengine_model_input": "manual-draft-model",
+        "volcengine_api_key_input": "manual-draft-key",
+        SESSION_AI_SETTINGS_RESOLVED_MODEL: "old-default-model",
+        SESSION_AI_SETTINGS_RESOLVED_API_KEY: "old-default-key",
+    }
+
+    sync_ai_settings_widget_state(
+        session_state,
+        resolved=ResolvedAiSettings(api_key="new-default-key", model="new-default-model"),
+        has_saved_ai_settings=False,
+    )
+
+    assert session_state["volcengine_model_input"] == "manual-draft-model"
+    assert session_state["volcengine_api_key_input"] == "manual-draft-key"

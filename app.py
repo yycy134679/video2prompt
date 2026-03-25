@@ -7,6 +7,7 @@ import copy
 import contextlib
 import hashlib
 import os
+import sys
 import threading
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -16,6 +17,18 @@ from uuid import uuid4
 import httpx
 import streamlit as st
 import yaml
+
+
+def _ensure_local_src_on_path() -> None:
+    src_path = Path(__file__).resolve().parent / "src"
+    if not src_path.is_dir():
+        return
+    src_path_str = str(src_path)
+    if src_path_str not in sys.path:
+        sys.path.insert(0, src_path_str)
+
+
+_ensure_local_src_on_path()
 
 from video2prompt.cache_store import CacheStore
 from video2prompt.circuit_breaker import CircuitBreaker
@@ -57,6 +70,9 @@ SESSION_RUN_CONTROLLER = "run_controller_id"
 SESSION_COOKIE_NOTICE = "cookie_notice"
 SESSION_COOKIE_FAILURE = "cookie_failure"
 SESSION_COOKIE_INPUT_RESET = "cookie_input_reset"
+SESSION_AI_SETTINGS_NOTICE = "ai_settings_notice"
+SESSION_AI_SETTINGS_RESOLVED_API_KEY = "ai_settings_resolved_api_key"
+SESSION_AI_SETTINGS_RESOLVED_MODEL = "ai_settings_resolved_model"
 SESSION_LAST_RUN_FINISHED = "last_run_finished"
 SESSION_LAST_RUN_CANCELLED = "last_run_cancelled"
 SESSION_LAST_RUN_ERROR_MESSAGE = "last_run_error_message"
@@ -98,6 +114,12 @@ class RunController:
 class ResolvedRunSettings:
     prompt_text: str
     output_format: str
+
+
+@dataclass(frozen=True)
+class ResolvedAiSettings:
+    api_key: str
+    model: str
 
 
 @dataclass(frozen=True)
@@ -218,6 +240,28 @@ def resolve_runtime_api_key(environ: Mapping[str, str] | None = None) -> str:
     return (env.get("VOLCENGINE_API_KEY", "").strip() or env.get("ARK_API_KEY", "").strip())
 
 
+def resolve_runtime_ai_settings(
+    user_state_store: UserStateStore,
+    default_model: str,
+    environ: Mapping[str, str] | None = None,
+) -> ResolvedAiSettings:
+    state = user_state_store.load()
+    return ResolvedAiSettings(
+        api_key=state.volcengine_api_key.strip() or resolve_runtime_api_key(environ),
+        model=state.volcengine_model.strip() or (default_model or "").strip(),
+    )
+
+
+def validate_runtime_ai_settings(app_mode: AppMode, api_key: str, model: str) -> str:
+    if app_mode == AppMode.DURATION_CHECK:
+        return ""
+    if not (api_key or "").strip():
+        return "缺少 API Key，请先在页面的「AI 配置」中填写 VOLCENGINE_API_KEY"
+    if not (model or "").strip():
+        return "缺少模型 ID，请先在页面的「AI 配置」中填写模型 ID"
+    return ""
+
+
 @st.cache_resource
 def _get_run_controller_registry() -> dict[str, RunController]:
     return {}
@@ -322,6 +366,41 @@ def resolve_prompt_session_key(app_mode: AppMode) -> str:
 
 def should_show_reset_prompt_button(app_mode: AppMode) -> bool:
     return app_mode in {AppMode.VIDEO_PROMPT, AppMode.CATEGORY_ANALYSIS}
+
+
+def sync_ai_settings_widget_state(
+    session_state: MutableMapping[str, Any],
+    resolved: ResolvedAiSettings,
+    has_saved_ai_settings: bool,
+) -> None:
+    has_resolution_markers = (
+        SESSION_AI_SETTINGS_RESOLVED_API_KEY in session_state
+        or SESSION_AI_SETTINGS_RESOLVED_MODEL in session_state
+    )
+    previous_api_key = str(session_state.get(SESSION_AI_SETTINGS_RESOLVED_API_KEY, ""))
+    previous_model = str(session_state.get(SESSION_AI_SETTINGS_RESOLVED_MODEL, ""))
+    current_api_key = str(session_state.get("volcengine_api_key_input", ""))
+    current_model = str(session_state.get("volcengine_model_input", ""))
+
+    should_reset_legacy_values = not has_saved_ai_settings and not has_resolution_markers
+    should_refresh_api_key = (
+        "volcengine_api_key_input" not in session_state
+        or should_reset_legacy_values
+        or (not has_saved_ai_settings and current_api_key == previous_api_key)
+    )
+    should_refresh_model = (
+        "volcengine_model_input" not in session_state
+        or should_reset_legacy_values
+        or (not has_saved_ai_settings and current_model == previous_model)
+    )
+
+    if should_refresh_api_key:
+        session_state["volcengine_api_key_input"] = resolved.api_key
+    if should_refresh_model:
+        session_state["volcengine_model_input"] = resolved.model
+
+    session_state[SESSION_AI_SETTINGS_RESOLVED_API_KEY] = resolved.api_key
+    session_state[SESSION_AI_SETTINGS_RESOLVED_MODEL] = resolved.model
 
 
 def sync_prompt_widget_state(
@@ -917,6 +996,70 @@ def _consume_cookie_input_reset(session_state: MutableMapping[str, Any]) -> None
         session_state["douyin_cookie_input"] = ""
 
 
+def _render_ai_settings_panel(
+    user_state_store: UserStateStore,
+    default_model: str,
+    environ: Mapping[str, str] | None = None,
+) -> None:
+    notice = str(st.session_state.pop(SESSION_AI_SETTINGS_NOTICE, "") or "")
+    resolved = resolve_runtime_ai_settings(
+        user_state_store=user_state_store,
+        default_model=default_model,
+        environ=environ,
+    )
+    state = user_state_store.load()
+    sync_ai_settings_widget_state(
+        st.session_state,
+        resolved=resolved,
+        has_saved_ai_settings=state.has_ai_settings,
+    )
+
+    with st.expander("AI 配置", expanded=True):
+        if notice == "saved":
+            st.success("AI 配置已保存到本机")
+        elif notice == "cleared":
+            st.info("本地 AI 配置已清空")
+
+        if state.has_ai_settings:
+            st.success("状态：已保存本地 AI 配置")
+        else:
+            st.warning("状态：未保存本地 AI 配置")
+
+        st.text_input(
+            "VOLCENGINE_API_KEY",
+            key="volcengine_api_key_input",
+            type="password",
+            placeholder="请输入火山方舟 API Key",
+        )
+        st.text_input(
+            "模型 ID",
+            key="volcengine_model_input",
+            placeholder="请输入模型 ID",
+        )
+        save_col, clear_col = st.columns(2)
+        with save_col:
+            if st.button("保存 AI 配置", use_container_width=True):
+                try:
+                    user_state_store.save_ai_settings(
+                        str(st.session_state.get("volcengine_api_key_input", "")),
+                        str(st.session_state.get("volcengine_model_input", "")),
+                    )
+                except ValueError as exc:
+                    st.error(str(exc))
+                else:
+                    st.session_state[SESSION_AI_SETTINGS_NOTICE] = "saved"
+                    st.rerun()
+        with clear_col:
+            if st.button("清空 AI 配置", use_container_width=True):
+                user_state_store.clear_ai_settings()
+                st.session_state["volcengine_api_key_input"] = resolve_runtime_api_key(
+                    environ
+                )
+                st.session_state["volcengine_model_input"] = (default_model or "").strip()
+                st.session_state[SESSION_AI_SETTINGS_NOTICE] = "cleared"
+                st.rerun()
+
+
 def _render_cookie_panel(user_state_store: UserStateStore, tasks: list[Task]) -> None:
     notice = str(st.session_state.pop(SESSION_COOKIE_NOTICE, "") or "")
     _consume_cookie_input_reset(st.session_state)
@@ -1069,6 +1212,10 @@ def main() -> None:
     _sync_run_controller_state(run_controller)
     _render_cookie_panel(
         user_state_store, _visible_tasks_for_cookie_status(run_controller)
+    )
+    _render_ai_settings_panel(
+        user_state_store=user_state_store,
+        default_model=base_config.volcengine.model,
     )
 
     runtime_overrides: dict[str, Any] = {}
@@ -1331,9 +1478,25 @@ def main() -> None:
             st.error("没有可执行的有效任务")
             st.stop()
 
+        runtime_ai_settings = ResolvedAiSettings(
+            api_key=str(st.session_state.get("volcengine_api_key_input", "")).strip(),
+            model=str(st.session_state.get("volcengine_model_input", "")).strip(),
+        )
+        ai_settings_error = validate_runtime_ai_settings(
+            app_mode,
+            api_key=runtime_ai_settings.api_key,
+            model=runtime_ai_settings.model,
+        )
+        if ai_settings_error:
+            st.error(ai_settings_error)
+            st.stop()
+
         try:
+            run_overrides = dict(runtime_overrides)
+            if app_mode != AppMode.DURATION_CHECK:
+                run_overrides["volcengine.model"] = runtime_ai_settings.model
             config_manager.clear_overrides()
-            config_manager.override_mapping(runtime_overrides)
+            config_manager.override_mapping(run_overrides)
             runtime_config = config_manager.get_config()
         except Exception as exc:  # noqa: BLE001
             st.error(f"运行时配置无效: {exc}")
@@ -1372,13 +1535,12 @@ def main() -> None:
                 daemon=True,
             )
         else:
-            api_key = resolve_runtime_api_key()
             worker = threading.Thread(
                 target=_scheduler_thread_entry,
                 kwargs={
                     "controller": controller,
                     "config": runtime_config,
-                    "api_key": api_key,
+                    "api_key": runtime_ai_settings.api_key,
                     "default_user_prompt": resolved_settings.prompt_text,
                     "output_format": resolved_settings.output_format,
                     "cache": cache,

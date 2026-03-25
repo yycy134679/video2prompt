@@ -30,6 +30,7 @@
 - 支持批量输入 `pid + 链接`，按类目模式额外支持类目字段
 - 内置平台页面解析流程，不依赖额外解析服务
 - 支持手动粘贴网页认证信息，并在本地持久化保存
+- 支持在页面中配置并本地保存火山 API Key 与模型 ID
 - 仅保留火山方舟 Responses API / Files API 路径
 - 内置四种运行模式：复刻提示词、翻译合规判断、按类目分析、视频时长判断
 - 本地 SQLite 缓存，避免相同 `link + prompt` 重复调用模型
@@ -59,7 +60,7 @@ flowchart LR
 - Python `3.11+`
 - 可用的平台网页认证信息（当前实现中通常为抖音 Cookie）
 - 如果要从源码运行视频时长判断模式，需要让 `ffprobe` 出现在 `PATH` 中
-- 如果要使用 AI 解读模式，需要配置 `VOLCENGINE_API_KEY` 或 `ARK_API_KEY`
+- 如果要从源码运行 AI 解读模式，建议在 `.env` 中配置 `VOLCENGINE_API_KEY` 或 `ARK_API_KEY`
 
 > [!NOTE]
 > 视频时长判断模式不会调用模型，因此不需要 API Key，但仍然需要有效的平台网页认证信息。
@@ -124,6 +125,11 @@ python -m streamlit run app.py --server.headless=false
 
 启动后，浏览器会打开本地页面。先在界面里粘贴并保存网页认证信息，然后再执行任务。
 
+如果要运行 AI 解读模式，还需要在页面的“AI 配置”中填写并保存：
+
+- `VOLCENGINE_API_KEY`
+- 模型 ID
+
 > [!IMPORTANT]
 > `scripts/start.sh` 不会自动激活 `.venv`，请先手动激活虚拟环境。
 
@@ -156,7 +162,14 @@ python -m streamlit run app.py --server.headless=false
 
 ### 运行时覆盖
 
-界面可以临时覆盖一些高频参数，仅对当前运行生效，例如：
+界面可以在页面中配置并持久化保存以下 AI 参数：
+
+- `VOLCENGINE_API_KEY`
+- 模型 ID
+
+当前页面中的 AI 配置会直接参与本次运行；点击“保存 AI 配置”后，会额外写入本机用户目录，供下次启动自动恢复。
+
+除此之外，界面还可以临时覆盖一些高频参数，仅对当前运行生效，例如：
 
 - `parser.concurrency`
 - `volcengine.video_fps`
@@ -196,7 +209,7 @@ python -m streamlit run app.py --server.headless=false
 - 日志：`logs/app.log`
 - 导出目录：`exports/`
 - 上次运行快照：`exports/last_run_result.json`
-- 认证信息持久化：`~/Library/Application Support/video2prompt/user_state.yaml`
+- 用户本地状态（Cookie、AI 配置）持久化：`~/Library/Application Support/video2prompt/user_state.yaml`
 
 ## macOS 打包
 
@@ -227,6 +240,13 @@ bash scripts/build_macos_app.sh
 - `logs/`
 - `exports/`
 
+业务同事首次使用打包应用时，建议按下面顺序操作：
+
+1. 打开应用
+2. 在页面中粘贴并保存抖音 Cookie
+3. 在“AI 配置”中填写并保存 `VOLCENGINE_API_KEY` 与模型 ID
+4. 再执行 AI 解读任务
+
 > [!IMPORTANT]
 > 构建前需要在 `packaging/bin/ffprobe` 放置可运行的 macOS `ffprobe` 二进制；构建脚本会自动收集它依赖的非系统 `.dylib` 并一起打包到 app 中，避免运行时依赖本机 Homebrew 路径。
 
@@ -234,7 +254,7 @@ bash scripts/build_macos_app.sh
 > 当前生成的 macOS 应用尚未签名，也没有做 notarization。
 
 > [!NOTE]
-> 打包后的应用可以在没有 API Key 的情况下启动；只有真正发起 AI 请求时才会校验密钥。
+> 打包后的应用可以在没有 API Key 的情况下启动；只有真正发起 AI 请求时才会校验页面中的 API Key 与模型 ID。
 
 ## 开发
 

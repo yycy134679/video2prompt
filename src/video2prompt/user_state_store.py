@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from contextlib import suppress
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 import os
 from pathlib import Path
@@ -23,10 +23,17 @@ def resolve_default_user_state_path() -> Path:
 class UserState:
     douyin_cookie: str = ""
     updated_at: str = ""
+    volcengine_api_key: str = ""
+    volcengine_model: str = ""
+    ai_settings_updated_at: str = ""
 
     @property
     def has_cookie(self) -> bool:
         return bool(self.douyin_cookie.strip())
+
+    @property
+    def has_ai_settings(self) -> bool:
+        return bool(self.volcengine_api_key.strip() and self.volcengine_model.strip())
 
 
 class UserStateStore:
@@ -60,13 +67,18 @@ class UserStateStore:
         return UserState(
             douyin_cookie=str(data.get("douyin_cookie") or ""),
             updated_at=str(data.get("updated_at") or ""),
+            volcengine_api_key=str(data.get("volcengine_api_key") or ""),
+            volcengine_model=str(data.get("volcengine_model") or ""),
+            ai_settings_updated_at=str(data.get("ai_settings_updated_at") or ""),
         )
 
     def save_cookie(self, cookie: str) -> UserState:
         normalized = (cookie or "").strip()
         if not normalized:
             raise ValueError("Cookie 不能为空")
-        state = UserState(
+        existing = self.load()
+        state = replace(
+            existing,
             douyin_cookie=normalized,
             updated_at=datetime.now().astimezone().isoformat(timespec="seconds"),
         )
@@ -74,7 +86,37 @@ class UserStateStore:
         return state
 
     def clear_cookie(self) -> UserState:
-        state = UserState()
+        state = replace(self.load(), douyin_cookie="", updated_at="")
+        self._write_state(state)
+        return state
+
+    def save_ai_settings(self, api_key: str, model: str) -> UserState:
+        normalized_api_key = (api_key or "").strip()
+        normalized_model = (model or "").strip()
+        if not normalized_api_key:
+            raise ValueError("API Key 不能为空")
+        if not normalized_model:
+            raise ValueError("模型 ID 不能为空")
+
+        existing = self.load()
+        state = replace(
+            existing,
+            volcengine_api_key=normalized_api_key,
+            volcengine_model=normalized_model,
+            ai_settings_updated_at=datetime.now()
+            .astimezone()
+            .isoformat(timespec="seconds"),
+        )
+        self._write_state(state)
+        return state
+
+    def clear_ai_settings(self) -> UserState:
+        state = replace(
+            self.load(),
+            volcengine_api_key="",
+            volcengine_model="",
+            ai_settings_updated_at="",
+        )
         self._write_state(state)
         return state
 
@@ -86,6 +128,9 @@ class UserStateStore:
         payload = {
             "douyin_cookie": state.douyin_cookie,
             "updated_at": state.updated_at,
+            "volcengine_api_key": state.volcengine_api_key,
+            "volcengine_model": state.volcengine_model,
+            "ai_settings_updated_at": state.ai_settings_updated_at,
         }
         self._path.write_text(
             yaml.safe_dump(payload, allow_unicode=True, sort_keys=False),
