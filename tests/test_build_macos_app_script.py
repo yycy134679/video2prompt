@@ -24,3 +24,10 @@ def test_build_script_checks_category_prompt_template_resource() -> None:
     text = SCRIPT_PATH.read_text(encoding="utf-8")
 
     assert "docs/视频脚本拆解分析.md" in text
+
+
+def test_build_script_prepares_standalone_ffprobe_bundle() -> None:
+    text = SCRIPT_PATH.read_text(encoding="utf-8")
+
+    assert '-m video2prompt.ffprobe_bundle' in text
+    assert 'FFPROBE_LIB_DIR="$ROOT_DIR/packaging/bin/lib"' in text

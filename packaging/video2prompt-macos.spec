@@ -1,5 +1,6 @@
 # -*- mode: python ; coding: utf-8 -*-
 
+import glob
 import os
 
 from PyInstaller.utils.hooks import collect_data_files, collect_submodules, copy_metadata
@@ -26,6 +27,8 @@ datas += streamlit_metadata
 binaries = [
     (os.path.join(ROOT_DIR, "packaging", "bin", "ffprobe"), "bin"),
 ]
+for library_path in glob.glob(os.path.join(ROOT_DIR, "packaging", "bin", "lib", "*.dylib")):
+    binaries.append((library_path, "bin/lib"))
 
 a = Analysis(
     [os.path.join(ROOT_DIR, "src", "video2prompt", "desktop_entry.py")],

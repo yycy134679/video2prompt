@@ -6,6 +6,7 @@ DIST_DIR="$ROOT_DIR/dist"
 BUILD_DIR="$ROOT_DIR/build"
 SPEC_FILE="$ROOT_DIR/packaging/video2prompt-macos.spec"
 FFPROBE_BIN="$ROOT_DIR/packaging/bin/ffprobe"
+FFPROBE_LIB_DIR="$ROOT_DIR/packaging/bin/lib"
 APP_BUNDLE_NAME="视频分析.app"
 ZIP_NAME="视频分析-macos.zip"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
@@ -32,6 +33,9 @@ fi
 if [ ! -x "$FFPROBE_BIN" ]; then
   chmod +x "$FFPROBE_BIN"
 fi
+
+mkdir -p "$FFPROBE_LIB_DIR"
+"$PYTHON_BIN" -m video2prompt.ffprobe_bundle "$FFPROBE_BIN" "$FFPROBE_LIB_DIR"
 
 file "$FFPROBE_BIN"
 otool -L "$FFPROBE_BIN"

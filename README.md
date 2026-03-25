@@ -228,7 +228,7 @@ bash scripts/build_macos_app.sh
 - `exports/`
 
 > [!IMPORTANT]
-> 构建需要在 `packaging/bin/ffprobe` 放置一个可分发的 macOS `ffprobe` 二进制。
+> 构建前需要在 `packaging/bin/ffprobe` 放置可运行的 macOS `ffprobe` 二进制；构建脚本会自动收集它依赖的非系统 `.dylib` 并一起打包到 app 中，避免运行时依赖本机 Homebrew 路径。
 
 > [!IMPORTANT]
 > 当前生成的 macOS 应用尚未签名，也没有做 notarization。

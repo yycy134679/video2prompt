@@ -50,3 +50,10 @@ def test_spec_sets_bundle_file_name_to_video_analysis() -> None:
     text = SPEC_PATH.read_text(encoding="utf-8")
 
     assert 'name="视频分析.app"' in text
+
+
+def test_spec_collects_bundled_ffprobe_libraries() -> None:
+    text = SPEC_PATH.read_text(encoding="utf-8")
+
+    assert 'glob.glob(os.path.join(ROOT_DIR, "packaging", "bin", "lib", "*.dylib"))' in text
+    assert '(library_path, "bin/lib")' in text
