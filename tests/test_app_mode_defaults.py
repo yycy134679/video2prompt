@@ -11,6 +11,8 @@ from app import (
     OUTPUT_FORMAT_JSON,
     OUTPUT_FORMAT_PLAIN_TEXT,
     ResolvedRunSettings,
+    SETTING_CATEGORY_ANALYSIS_PROMPT_CUSTOM_ENABLED,
+    SETTING_VIDEO_PROMPT_CUSTOM_ENABLED,
     SESSION_CATEGORY_ANALYSIS_PROMPT,
     SESSION_TRANSLATION_COMPLIANCE_PROMPT,
     SESSION_VIDEO_PROMPT,
@@ -220,9 +222,10 @@ def test_load_prompt_template_falls_back_when_missing(tmp_path: Path) -> None:
 
 
 def test_choose_video_prompt_initial_value_prefers_saved_then_legacy_then_doc() -> None:
-    assert choose_video_prompt_initial_value("saved", "legacy", "doc") == "saved"
-    assert choose_video_prompt_initial_value("", "legacy", "doc") == "legacy"
-    assert choose_video_prompt_initial_value("", "", "doc") == "doc"
+    assert choose_video_prompt_initial_value("saved", "legacy", "doc", True) == "saved"
+    assert choose_video_prompt_initial_value("", "legacy", "doc", True) == "legacy"
+    assert choose_video_prompt_initial_value("", "", "doc", True) == "doc"
+    assert choose_video_prompt_initial_value("saved", "legacy", "doc", False) == "doc"
 
 
 def test_choose_translation_prompt_initial_value_prefers_saved_then_doc() -> None:
@@ -231,8 +234,9 @@ def test_choose_translation_prompt_initial_value_prefers_saved_then_doc() -> Non
 
 
 def test_choose_category_prompt_initial_value_prefers_saved_then_doc() -> None:
-    assert choose_category_prompt_initial_value("saved", "doc") == "saved"
-    assert choose_category_prompt_initial_value("", "doc") == "doc"
+    assert choose_category_prompt_initial_value("saved", "doc", True) == "saved"
+    assert choose_category_prompt_initial_value("", "doc", True) == "doc"
+    assert choose_category_prompt_initial_value("saved", "doc", False) == "doc"
 
 
 def test_resolve_prompt_setting_key_matches_mode() -> None:
@@ -270,7 +274,10 @@ def test_build_persist_operations_for_video_mode_only_writes_prompt() -> None:
         output_format=OUTPUT_FORMAT_JSON,
     )
 
-    assert operations == [("prompt.video_prompt", "video")]
+    assert operations == [
+        ("prompt.video_prompt", "video"),
+        (SETTING_VIDEO_PROMPT_CUSTOM_ENABLED, "1"),
+    ]
 
 
 def test_build_persist_operations_for_category_mode_only_writes_prompt() -> None:
@@ -280,7 +287,10 @@ def test_build_persist_operations_for_category_mode_only_writes_prompt() -> None
         output_format=OUTPUT_FORMAT_JSON,
     )
 
-    assert operations == [("prompt.category_analysis", "category")]
+    assert operations == [
+        ("prompt.category_analysis", "category"),
+        (SETTING_CATEGORY_ANALYSIS_PROMPT_CUSTOM_ENABLED, "1"),
+    ]
 
 
 def test_build_run_settings_uses_normalized_prompt_for_translation_mode() -> None:
@@ -416,19 +426,34 @@ def test_app_uses_business_friendly_labels_for_settings_and_prompt_editor() -> N
 
 
 def test_switching_to_category_mode_shows_category_prompt_content() -> None:
-    at = _new_app_test()
+    session_state = {
+        SESSION_CATEGORY_ANALYSIS_PROMPT: choose_category_prompt_initial_value(
+            saved_prompt=None,
+            default_prompt=_default_category_prompt(),
+            use_saved_prompt=False,
+        )
+    }
 
-    at.run(timeout=10)
-    at.selectbox[0].set_value(AppMode.VIDEO_PROMPT.value)
-    at.run(timeout=10)
-    _text_area_by_label(at, "提示词内容").set_value("视频模式保存值")
-    _button_by_label(at, "保存提示词").click()
-    at.run(timeout=10)
+    assert (
+        resolve_mode_prompt(
+            AppMode.CATEGORY_ANALYSIS,
+            session_state,
+            video_prompt_default=_default_video_prompt(),
+            category_prompt_default=_default_category_prompt(),
+            translation_prompt_default=DEFAULT_REVIEW_PROMPT,
+        )
+        == _default_category_prompt()
+    )
 
-    at.selectbox[0].set_value(AppMode.CATEGORY_ANALYSIS.value)
-    at.run(timeout=10)
 
-    assert _text_area_by_label(at, "提示词内容").value != "视频模式保存值"
+def test_existing_saved_category_prompt_is_ignored_before_user_enables_custom_value() -> None:
+    initial_value = choose_category_prompt_initial_value(
+        saved_prompt="旧的类目自定义值",
+        default_prompt=_default_category_prompt(),
+        use_saved_prompt=False,
+    )
+
+    assert initial_value == _default_category_prompt()
 
 
 def test_video_and_category_prompt_saved_values_remain_independent() -> None:

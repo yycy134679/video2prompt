@@ -70,6 +70,10 @@ SESSION_PROMPT_NOTICE = "prompt_notice"
 SETTING_VIDEO_PROMPT = "prompt.video_prompt"
 SETTING_CATEGORY_ANALYSIS_PROMPT = "prompt.category_analysis"
 SETTING_TRANSLATION_COMPLIANCE_PROMPT = "prompt.translation_compliance"
+SETTING_VIDEO_PROMPT_CUSTOM_ENABLED = "prompt.video_prompt_custom_enabled"
+SETTING_CATEGORY_ANALYSIS_PROMPT_CUSTOM_ENABLED = (
+    "prompt.category_analysis_custom_enabled"
+)
 SETTING_VIDEO_PROMPT_OUTPUT_FORMAT = "output_format.video_prompt"
 @dataclass
 class RunController:
@@ -270,7 +274,10 @@ def choose_video_prompt_initial_value(
     saved_prompt: str | None,
     legacy_prompt: str | None,
     default_prompt: str,
+    use_saved_prompt: bool,
 ) -> str:
+    if not use_saved_prompt:
+        return default_prompt
     return (
         (saved_prompt or "").strip() or (legacy_prompt or "").strip() or default_prompt
     )
@@ -286,8 +293,15 @@ def choose_translation_prompt_initial_value(
 def choose_category_prompt_initial_value(
     saved_prompt: str | None,
     default_prompt: str,
+    use_saved_prompt: bool,
 ) -> str:
+    if not use_saved_prompt:
+        return default_prompt
     return (saved_prompt or "").strip() or default_prompt
+
+
+def is_setting_enabled(value: str | None) -> bool:
+    return str(value or "").strip() == "1"
 
 
 def resolve_prompt_widget_key(app_mode: AppMode) -> str:
@@ -347,6 +361,14 @@ def resolve_prompt_setting_key(app_mode: AppMode) -> str:
     return SETTING_VIDEO_PROMPT
 
 
+def resolve_prompt_custom_enabled_setting_key(app_mode: AppMode) -> str | None:
+    if app_mode == AppMode.CATEGORY_ANALYSIS:
+        return SETTING_CATEGORY_ANALYSIS_PROMPT_CUSTOM_ENABLED
+    if app_mode == AppMode.VIDEO_PROMPT:
+        return SETTING_VIDEO_PROMPT_CUSTOM_ENABLED
+    return None
+
+
 def should_persist_output_format(app_mode: AppMode) -> bool:
     return False
 
@@ -357,6 +379,9 @@ def build_persist_operations(
     output_format: str,
 ) -> list[tuple[str, str]]:
     operations = [(resolve_prompt_setting_key(app_mode), prompt_text)]
+    custom_enabled_setting_key = resolve_prompt_custom_enabled_setting_key(app_mode)
+    if custom_enabled_setting_key:
+        operations.append((custom_enabled_setting_key, "1"))
     if should_persist_output_format(app_mode):
         operations.append((SETTING_VIDEO_PROMPT_OUTPUT_FORMAT, output_format))
     return operations
@@ -979,10 +1004,14 @@ def main() -> None:
         DEFAULT_REVIEW_PROMPT,
     )
     if SESSION_VIDEO_PROMPT not in st.session_state:
+        video_prompt_custom_enabled = is_setting_enabled(
+            asyncio.run(cache.load_setting(SETTING_VIDEO_PROMPT_CUSTOM_ENABLED))
+        )
         st.session_state[SESSION_VIDEO_PROMPT] = choose_video_prompt_initial_value(
             asyncio.run(cache.load_setting(SETTING_VIDEO_PROMPT)),
             asyncio.run(cache.load_system_prompt()),
             video_prompt_template,
+            video_prompt_custom_enabled,
         )
     if SESSION_TRANSLATION_COMPLIANCE_PROMPT not in st.session_state:
         st.session_state[SESSION_TRANSLATION_COMPLIANCE_PROMPT] = (
@@ -992,10 +1021,14 @@ def main() -> None:
             )
         )
     if SESSION_CATEGORY_ANALYSIS_PROMPT not in st.session_state:
+        category_prompt_custom_enabled = is_setting_enabled(
+            asyncio.run(cache.load_setting(SETTING_CATEGORY_ANALYSIS_PROMPT_CUSTOM_ENABLED))
+        )
         st.session_state[SESSION_CATEGORY_ANALYSIS_PROMPT] = (
             choose_category_prompt_initial_value(
                 asyncio.run(cache.load_setting(SETTING_CATEGORY_ANALYSIS_PROMPT)),
                 category_prompt_template,
+                category_prompt_custom_enabled,
             )
         )
     if SESSION_VIDEO_PROMPT_OUTPUT_FORMAT not in st.session_state:
@@ -1196,11 +1229,13 @@ def main() -> None:
             session_prompt_key = resolve_prompt_session_key(app_mode)
             st.session_state[session_prompt_key] = default_prompt
             st.session_state[SESSION_PROMPT_EDITOR_REFRESH_MODE] = app_mode.value
-            for setting_key, setting_value in build_persist_operations(
-                app_mode,
-                default_prompt,
-                resolve_output_format_for_mode(app_mode, st.session_state),
-            ):
+            operations = [
+                (resolve_prompt_setting_key(app_mode), default_prompt),
+            ]
+            custom_enabled_setting_key = resolve_prompt_custom_enabled_setting_key(app_mode)
+            if custom_enabled_setting_key:
+                operations.append((custom_enabled_setting_key, "0"))
+            for setting_key, setting_value in operations:
                 asyncio.run(cache.save_setting(setting_key, setting_value))
             st.session_state[SESSION_PROMPT_NOTICE] = "已恢复默认提示词"
             st.rerun()
