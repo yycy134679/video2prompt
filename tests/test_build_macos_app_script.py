@@ -31,3 +31,9 @@ def test_build_script_prepares_standalone_ffprobe_bundle() -> None:
 
     assert '-m video2prompt.ffprobe_bundle' in text
     assert 'FFPROBE_LIB_DIR="$ROOT_DIR/packaging/bin/lib"' in text
+
+
+def test_build_script_exports_src_pythonpath_before_module_invocation() -> None:
+    text = SCRIPT_PATH.read_text(encoding="utf-8")
+
+    assert 'export PYTHONPATH="$ROOT_DIR/src:${PYTHONPATH:-}"' in text

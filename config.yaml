@@ -32,7 +32,7 @@ parser:
   # 兼容保留字段：当前版本不再依赖外部 HTTP 解析服务，读取但忽略
   base_url: "http://localhost:80"
   # 并发解析任务数（建议 1-5）
-  concurrency: 3
+  concurrency: 2
   # 每次解析完成后，槽位冷却最小秒数
   pre_delay_min_seconds: 3.0
   # 每次解析完成后，槽位冷却最大秒数
@@ -73,7 +73,7 @@ circuit_breaker:
 # 单任务尾部延时配置
 task:
   # 任务完成后随机等待最小秒数
-  completion_delay_min_seconds: 1.5
+  completion_delay_min_seconds: 3.0
   # 任务完成后随机等待最大秒数
   completion_delay_max_seconds: 3.0
 

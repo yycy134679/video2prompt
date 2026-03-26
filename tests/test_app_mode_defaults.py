@@ -566,6 +566,22 @@ def test_duration_mode_hides_prompt_editor() -> None:
     assert not any(text_area.label == "提示词内容" for text_area in at.text_area)
 
 
+def test_clear_ai_settings_does_not_raise_and_resets_inputs() -> None:
+    at = _new_app_test()
+
+    at.run(timeout=10)
+    expected_api_key = app.resolve_runtime_api_key()
+    expected_model = app.build_config_manager(use_runtime_paths=True).get_config().volcengine.model
+    at.text_input[0].set_value("api-key")
+    at.text_input[1].set_value("custom-model")
+    _button_by_label(at, "清空 AI 配置").click()
+    at.run(timeout=10)
+
+    assert not at.exception
+    assert at.text_input[0].value == expected_api_key
+    assert at.text_input[1].value == expected_model
+
+
 def test_sync_ai_settings_widget_state_initializes_inputs_from_resolved_values() -> None:
     session_state: dict[str, object] = {}
 

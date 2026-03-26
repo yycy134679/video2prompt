@@ -71,6 +71,7 @@ SESSION_COOKIE_NOTICE = "cookie_notice"
 SESSION_COOKIE_FAILURE = "cookie_failure"
 SESSION_COOKIE_INPUT_RESET = "cookie_input_reset"
 SESSION_AI_SETTINGS_NOTICE = "ai_settings_notice"
+SESSION_AI_SETTINGS_INPUT_RESET = "ai_settings_input_reset"
 SESSION_AI_SETTINGS_RESOLVED_API_KEY = "ai_settings_resolved_api_key"
 SESSION_AI_SETTINGS_RESOLVED_MODEL = "ai_settings_resolved_model"
 SESSION_LAST_RUN_FINISHED = "last_run_finished"
@@ -996,6 +997,15 @@ def _consume_cookie_input_reset(session_state: MutableMapping[str, Any]) -> None
         session_state["douyin_cookie_input"] = ""
 
 
+def _consume_ai_settings_input_reset(
+    session_state: MutableMapping[str, Any],
+    resolved: ResolvedAiSettings,
+) -> None:
+    if bool(session_state.pop(SESSION_AI_SETTINGS_INPUT_RESET, False)):
+        session_state["volcengine_api_key_input"] = resolved.api_key
+        session_state["volcengine_model_input"] = resolved.model
+
+
 def _render_ai_settings_panel(
     user_state_store: UserStateStore,
     default_model: str,
@@ -1008,6 +1018,7 @@ def _render_ai_settings_panel(
         environ=environ,
     )
     state = user_state_store.load()
+    _consume_ai_settings_input_reset(st.session_state, resolved)
     sync_ai_settings_widget_state(
         st.session_state,
         resolved=resolved,
@@ -1052,10 +1063,7 @@ def _render_ai_settings_panel(
         with clear_col:
             if st.button("清空 AI 配置", use_container_width=True):
                 user_state_store.clear_ai_settings()
-                st.session_state["volcengine_api_key_input"] = resolve_runtime_api_key(
-                    environ
-                )
-                st.session_state["volcengine_model_input"] = (default_model or "").strip()
+                st.session_state[SESSION_AI_SETTINGS_INPUT_RESET] = True
                 st.session_state[SESSION_AI_SETTINGS_NOTICE] = "cleared"
                 st.rerun()
 
