@@ -14,12 +14,20 @@ from app import (
     ResolvedAiSettings,
     SETTING_CATEGORY_ANALYSIS_PROMPT_CUSTOM_ENABLED,
     SETTING_VIDEO_PROMPT_CUSTOM_ENABLED,
+    SESSION_ADVANCED_PARSER_CONCURRENCY,
+    SESSION_ADVANCED_REASONING_EFFORT,
+    SESSION_ADVANCED_THINKING_TYPE,
+    SESSION_ADVANCED_VIDEO_FPS,
     SESSION_AI_SETTINGS_RESOLVED_API_KEY,
     SESSION_AI_SETTINGS_RESOLVED_MODEL,
     SESSION_CATEGORY_ANALYSIS_PROMPT,
     SESSION_TRANSLATION_COMPLIANCE_PROMPT,
     SESSION_VIDEO_PROMPT,
     SESSION_VIDEO_PROMPT_OUTPUT_FORMAT,
+    _advanced_settings_are_synced,
+    _build_advanced_settings_draft,
+    _build_saved_advanced_settings,
+    _sync_advanced_settings_widget_state,
     build_persist_operations,
     build_controller_payload,
     build_run_settings,
@@ -35,7 +43,7 @@ from app import (
     sync_ai_settings_widget_state,
 )
 from video2prompt.review_result import DEFAULT_REVIEW_PROMPT
-from video2prompt.models import AppMode
+from video2prompt.models import AppConfig, AppMode
 
 
 def _repo_root() -> Path:
@@ -427,6 +435,97 @@ def test_app_uses_business_friendly_labels_for_settings_and_prompt_editor() -> N
     assert not any("volcengine.thinking_type" in label for label in selectbox_labels)
     assert "思考强度" in selectbox_labels
     assert not any("volcengine.reasoning_effort" in label for label in selectbox_labels)
+    assert "保存高级设置" in button_labels
+
+
+
+def test_sync_advanced_settings_widget_state_initializes_from_saved_config() -> None:
+    session_state: dict[str, object] = {}
+
+    _sync_advanced_settings_widget_state(
+        session_state,
+        {
+            "parser.concurrency": 3,
+            "volcengine.video_fps": 1.5,
+            "volcengine.thinking_type": "auto",
+            "volcengine.reasoning_effort": "high",
+        },
+    )
+
+    assert session_state[SESSION_ADVANCED_PARSER_CONCURRENCY] == 3
+    assert session_state[SESSION_ADVANCED_VIDEO_FPS] == 1.5
+    assert session_state[SESSION_ADVANCED_THINKING_TYPE] == "auto"
+    assert session_state[SESSION_ADVANCED_REASONING_EFFORT] == "high"
+
+
+
+def test_sync_advanced_settings_widget_state_preserves_unsaved_draft() -> None:
+    session_state: dict[str, object] = {
+        SESSION_ADVANCED_PARSER_CONCURRENCY: 8,
+        SESSION_ADVANCED_VIDEO_FPS: 2.0,
+        SESSION_ADVANCED_THINKING_TYPE: "disabled",
+        SESSION_ADVANCED_REASONING_EFFORT: "low",
+    }
+
+    _sync_advanced_settings_widget_state(
+        session_state,
+        {
+            "parser.concurrency": 3,
+            "volcengine.video_fps": 1.5,
+            "volcengine.thinking_type": "auto",
+            "volcengine.reasoning_effort": "high",
+        },
+    )
+
+    assert session_state[SESSION_ADVANCED_PARSER_CONCURRENCY] == 8
+    assert session_state[SESSION_ADVANCED_VIDEO_FPS] == 2.0
+    assert session_state[SESSION_ADVANCED_THINKING_TYPE] == "disabled"
+    assert session_state[SESSION_ADVANCED_REASONING_EFFORT] == "low"
+
+
+
+def test_build_advanced_settings_draft_uses_only_visible_duration_fields() -> None:
+    session_state = {
+        SESSION_ADVANCED_PARSER_CONCURRENCY: 6,
+        SESSION_ADVANCED_VIDEO_FPS: 0.7,
+        SESSION_ADVANCED_THINKING_TYPE: "auto",
+        SESSION_ADVANCED_REASONING_EFFORT: "high",
+    }
+
+    assert _build_advanced_settings_draft(AppMode.DURATION_CHECK, session_state) == {
+        "parser.concurrency": 6
+    }
+
+
+
+def test_advanced_settings_sync_state_matches_saved_subset() -> None:
+    saved_settings = {
+        "parser.concurrency": 6,
+        "volcengine.video_fps": 0.7,
+        "volcengine.thinking_type": "auto",
+        "volcengine.reasoning_effort": "high",
+    }
+
+    assert _advanced_settings_are_synced(
+        {"parser.concurrency": 6},
+        saved_settings,
+    )
+    assert not _advanced_settings_are_synced(
+        {"parser.concurrency": 5},
+        saved_settings,
+    )
+
+
+
+def test_build_saved_advanced_settings_extracts_current_config_values() -> None:
+    config = AppConfig()
+
+    saved = _build_saved_advanced_settings(config)
+
+    assert saved["parser.concurrency"] == config.parser.concurrency
+    assert saved["volcengine.video_fps"] == config.volcengine.video_fps
+    assert saved["volcengine.thinking_type"] == config.volcengine.thinking_type
+    assert saved["volcengine.reasoning_effort"] == config.volcengine.reasoning_effort
 
 
 def test_switching_to_category_mode_shows_category_prompt_content() -> None:

@@ -87,6 +87,25 @@ class ConfigManager:
     def clear_overrides(self) -> None:
         self._overrides = {}
 
+    def save_mapping(self, mapping: dict[str, Any]) -> AppConfig:
+        if not mapping:
+            return self.get_config()
+
+        updated = copy.deepcopy(self._load_yaml())
+        for key, value in mapping.items():
+            if not isinstance(key, str) or not key:
+                raise ConfigError("save_mapping 的键必须是非空字符串")
+            self._set_dotted_value(updated, key, value)
+
+        config = self._build_app_config(updated)
+        self._config_path.write_text(
+            yaml.safe_dump(updated, allow_unicode=True, sort_keys=False),
+            encoding="utf-8",
+        )
+        self._reload_base_config()
+        self.clear_overrides()
+        return self._apply_runtime_file_overrides(config)
+
     def get_config(self) -> AppConfig:
         base = asdict(self._base_config)
         merged = copy.deepcopy(base)

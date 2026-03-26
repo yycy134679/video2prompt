@@ -66,6 +66,110 @@ parser:
     assert config.parser.concurrency == 2
 
 
+def test_save_mapping_persists_advanced_settings_to_config_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("VOLCENGINE_API_KEY", "volc_test_key")
+    monkeypatch.delenv("ARK_API_KEY", raising=False)
+
+    env = tmp_path / ".env"
+    cfg = tmp_path / "config.yaml"
+    _write(env, "")
+    _write(
+        cfg,
+        """
+volcengine:
+  model: "doubao-test-model"
+  video_fps: 1.0
+  thinking_type: "enabled"
+  reasoning_effort: "medium"
+parser:
+  concurrency: 2
+        """.strip(),
+    )
+
+    manager = ConfigManager(env_path=str(env), config_path=str(cfg))
+    config = manager.save_mapping(
+        {
+            "parser.concurrency": 4,
+            "volcengine.video_fps": 0.5,
+            "volcengine.thinking_type": "auto",
+            "volcengine.reasoning_effort": "high",
+        }
+    )
+
+    assert config.parser.concurrency == 4
+    assert config.volcengine.video_fps == 0.5
+    assert config.volcengine.thinking_type == "auto"
+    assert config.volcengine.reasoning_effort == "high"
+
+    reloaded = ConfigManager(env_path=str(env), config_path=str(cfg)).get_config()
+    assert reloaded.parser.concurrency == 4
+    assert reloaded.volcengine.video_fps == 0.5
+    assert reloaded.volcengine.thinking_type == "auto"
+    assert reloaded.volcengine.reasoning_effort == "high"
+
+
+
+def test_save_mapping_preserves_other_config_values_when_only_saving_concurrency(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("VOLCENGINE_API_KEY", "volc_test_key")
+    monkeypatch.delenv("ARK_API_KEY", raising=False)
+
+    env = tmp_path / ".env"
+    cfg = tmp_path / "config.yaml"
+    _write(env, "")
+    _write(
+        cfg,
+        """
+volcengine:
+  model: "doubao-test-model"
+  video_fps: 1.7
+  thinking_type: "disabled"
+  reasoning_effort: "low"
+parser:
+  concurrency: 2
+        """.strip(),
+    )
+
+    manager = ConfigManager(env_path=str(env), config_path=str(cfg))
+    config = manager.save_mapping({"parser.concurrency": 6})
+
+    assert config.parser.concurrency == 6
+    assert config.volcengine.video_fps == 1.7
+    assert config.volcengine.thinking_type == "disabled"
+    assert config.volcengine.reasoning_effort == "low"
+
+
+
+def test_save_mapping_does_not_write_invalid_values(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("VOLCENGINE_API_KEY", "volc_test_key")
+    monkeypatch.delenv("ARK_API_KEY", raising=False)
+
+    env = tmp_path / ".env"
+    cfg = tmp_path / "config.yaml"
+    _write(env, "")
+    original = """
+volcengine:
+  model: "doubao-test-model"
+  video_fps: 1.0
+parser:
+  concurrency: 2
+    """.strip()
+    _write(cfg, original)
+
+    manager = ConfigManager(env_path=str(env), config_path=str(cfg))
+
+    with pytest.raises(ConfigError):
+        manager.save_mapping({"parser.concurrency": 0})
+
+    assert cfg.read_text(encoding="utf-8").strip() == original
+
+
+
 def test_config_invalid_concurrency(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("VOLCENGINE_API_KEY", "volc_test_key")
     monkeypatch.delenv("ARK_API_KEY", raising=False)
