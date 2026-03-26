@@ -74,6 +74,11 @@ SESSION_AI_SETTINGS_NOTICE = "ai_settings_notice"
 SESSION_AI_SETTINGS_INPUT_RESET = "ai_settings_input_reset"
 SESSION_AI_SETTINGS_RESOLVED_API_KEY = "ai_settings_resolved_api_key"
 SESSION_AI_SETTINGS_RESOLVED_MODEL = "ai_settings_resolved_model"
+SESSION_ADVANCED_SETTINGS_NOTICE = "advanced_settings_notice"
+SESSION_ADVANCED_PARSER_CONCURRENCY = "advanced_parser_concurrency"
+SESSION_ADVANCED_VIDEO_FPS = "advanced_video_fps"
+SESSION_ADVANCED_THINKING_TYPE = "advanced_thinking_type"
+SESSION_ADVANCED_REASONING_EFFORT = "advanced_reasoning_effort"
 SESSION_LAST_RUN_FINISHED = "last_run_finished"
 SESSION_LAST_RUN_CANCELLED = "last_run_cancelled"
 SESSION_LAST_RUN_ERROR_MESSAGE = "last_run_error_message"
@@ -261,6 +266,62 @@ def validate_runtime_ai_settings(app_mode: AppMode, api_key: str, model: str) ->
     if not (model or "").strip():
         return "缺少模型 ID，请先在页面的「AI 配置」中填写模型 ID"
     return ""
+
+
+def _build_saved_advanced_settings(config: Any) -> dict[str, Any]:
+    return {
+        "parser.concurrency": int(config.parser.concurrency),
+        "volcengine.video_fps": float(config.volcengine.video_fps),
+        "volcengine.thinking_type": str(config.volcengine.thinking_type),
+        "volcengine.reasoning_effort": str(config.volcengine.reasoning_effort),
+    }
+
+
+def _sync_advanced_settings_widget_state(
+    session_state: MutableMapping[str, Any],
+    saved_settings: Mapping[str, Any],
+) -> None:
+    if SESSION_ADVANCED_PARSER_CONCURRENCY not in session_state:
+        session_state[SESSION_ADVANCED_PARSER_CONCURRENCY] = int(
+            saved_settings["parser.concurrency"]
+        )
+    if SESSION_ADVANCED_VIDEO_FPS not in session_state:
+        session_state[SESSION_ADVANCED_VIDEO_FPS] = float(
+            saved_settings["volcengine.video_fps"]
+        )
+    if SESSION_ADVANCED_THINKING_TYPE not in session_state:
+        session_state[SESSION_ADVANCED_THINKING_TYPE] = str(
+            saved_settings["volcengine.thinking_type"]
+        )
+    if SESSION_ADVANCED_REASONING_EFFORT not in session_state:
+        session_state[SESSION_ADVANCED_REASONING_EFFORT] = str(
+            saved_settings["volcengine.reasoning_effort"]
+        )
+
+
+def _build_advanced_settings_draft(
+    app_mode: AppMode,
+    session_state: Mapping[str, Any],
+) -> dict[str, Any]:
+    draft = {
+        "parser.concurrency": int(session_state[SESSION_ADVANCED_PARSER_CONCURRENCY]),
+    }
+    if app_mode != AppMode.DURATION_CHECK:
+        draft["volcengine.video_fps"] = float(session_state[SESSION_ADVANCED_VIDEO_FPS])
+        draft["volcengine.thinking_type"] = str(
+            session_state[SESSION_ADVANCED_THINKING_TYPE]
+        )
+        draft["volcengine.reasoning_effort"] = str(
+            session_state[SESSION_ADVANCED_REASONING_EFFORT]
+        )
+    return draft
+
+
+def _advanced_settings_are_synced(
+    draft_settings: Mapping[str, Any],
+    saved_settings: Mapping[str, Any],
+) -> bool:
+    return all(saved_settings.get(key) == value for key, value in draft_settings.items())
 
 
 @st.cache_resource
@@ -1226,60 +1287,64 @@ def main() -> None:
         default_model=base_config.volcengine.model,
     )
 
+    saved_advanced_settings = _build_saved_advanced_settings(base_config)
+    _sync_advanced_settings_widget_state(st.session_state, saved_advanced_settings)
+    advanced_settings_notice = str(
+        st.session_state.pop(SESSION_ADVANCED_SETTINGS_NOTICE, "") or ""
+    )
+    current_advanced_draft = _build_advanced_settings_draft(app_mode, st.session_state)
+    advanced_settings_synced = _advanced_settings_are_synced(
+        current_advanced_draft,
+        saved_advanced_settings,
+    )
+
     runtime_overrides: dict[str, Any] = {}
     output_format = OUTPUT_FORMAT_PLAIN_TEXT
     with st.expander("高级设置", expanded=False):
+        if advanced_settings_notice:
+            st.success(advanced_settings_notice)
+        elif advanced_settings_synced:
+            st.caption("当前高级设置已同步到配置文件")
+        else:
+            st.warning("当前高级设置有未保存修改")
+
         if app_mode == AppMode.DURATION_CHECK:
-            runtime_overrides["parser.concurrency"] = st.number_input(
+            st.number_input(
                 "解析并发数",
                 min_value=1,
                 max_value=50,
-                value=base_config.parser.concurrency,
                 step=1,
+                key=SESSION_ADVANCED_PARSER_CONCURRENCY,
             )
         elif app_mode == AppMode.TRANSLATION_COMPLIANCE:
             output_format = OUTPUT_FORMAT_JSON
             st.session_state["output_format"] = output_format
             col1, col2 = st.columns(2)
             with col1:
-                runtime_overrides["parser.concurrency"] = st.number_input(
+                st.number_input(
                     "解析并发数",
                     min_value=1,
                     max_value=50,
-                    value=base_config.parser.concurrency,
                     step=1,
+                    key=SESSION_ADVANCED_PARSER_CONCURRENCY,
                 )
-                runtime_overrides["volcengine.video_fps"] = st.number_input(
+                st.number_input(
                     "视频采样帧率",
                     min_value=0.2,
                     max_value=5.0,
-                    value=float(base_config.volcengine.video_fps),
                     step=0.1,
+                    key=SESSION_ADVANCED_VIDEO_FPS,
                 )
             with col2:
-                thinking_options = ["enabled", "disabled", "auto"]
-                current_thinking = (
-                    (base_config.volcengine.thinking_type or "enabled").strip().lower()
-                )
-                if current_thinking not in thinking_options:
-                    current_thinking = "enabled"
-                runtime_overrides["volcengine.thinking_type"] = st.selectbox(
+                st.selectbox(
                     "思考模式",
-                    options=thinking_options,
-                    index=thinking_options.index(current_thinking),
+                    options=["enabled", "disabled", "auto"],
+                    key=SESSION_ADVANCED_THINKING_TYPE,
                 )
-                reasoning_options = ["minimal", "low", "medium", "high"]
-                current_reasoning = (
-                    (base_config.volcengine.reasoning_effort or "medium")
-                    .strip()
-                    .lower()
-                )
-                if current_reasoning not in reasoning_options:
-                    current_reasoning = "medium"
-                runtime_overrides["volcengine.reasoning_effort"] = st.selectbox(
+                st.selectbox(
                     "思考强度",
-                    options=reasoning_options,
-                    index=reasoning_options.index(current_reasoning),
+                    options=["minimal", "low", "medium", "high"],
+                    key=SESSION_ADVANCED_REASONING_EFFORT,
                 )
         else:
             output_format = OUTPUT_FORMAT_PLAIN_TEXT
@@ -1287,45 +1352,46 @@ def main() -> None:
             st.session_state[SESSION_VIDEO_PROMPT_OUTPUT_FORMAT] = output_format
             col1, col2 = st.columns(2)
             with col1:
-                runtime_overrides["parser.concurrency"] = st.number_input(
+                st.number_input(
                     "解析并发数",
                     min_value=1,
                     max_value=50,
-                    value=base_config.parser.concurrency,
                     step=1,
+                    key=SESSION_ADVANCED_PARSER_CONCURRENCY,
                 )
-                runtime_overrides["volcengine.video_fps"] = st.number_input(
+                st.number_input(
                     "视频采样帧率",
                     min_value=0.2,
                     max_value=5.0,
-                    value=float(base_config.volcengine.video_fps),
                     step=0.1,
+                    key=SESSION_ADVANCED_VIDEO_FPS,
                 )
             with col2:
-                thinking_options = ["enabled", "disabled", "auto"]
-                current_thinking = (
-                    (base_config.volcengine.thinking_type or "enabled").strip().lower()
-                )
-                if current_thinking not in thinking_options:
-                    current_thinking = "enabled"
-                runtime_overrides["volcengine.thinking_type"] = st.selectbox(
+                st.selectbox(
                     "思考模式",
-                    options=thinking_options,
-                    index=thinking_options.index(current_thinking),
+                    options=["enabled", "disabled", "auto"],
+                    key=SESSION_ADVANCED_THINKING_TYPE,
                 )
-                reasoning_options = ["minimal", "low", "medium", "high"]
-                current_reasoning = (
-                    (base_config.volcengine.reasoning_effort or "medium")
-                    .strip()
-                    .lower()
-                )
-                if current_reasoning not in reasoning_options:
-                    current_reasoning = "medium"
-                runtime_overrides["volcengine.reasoning_effort"] = st.selectbox(
+                st.selectbox(
                     "思考强度",
-                    options=reasoning_options,
-                    index=reasoning_options.index(current_reasoning),
+                    options=["minimal", "low", "medium", "high"],
+                    key=SESSION_ADVANCED_REASONING_EFFORT,
                 )
+
+        current_advanced_draft = _build_advanced_settings_draft(app_mode, st.session_state)
+        save_advanced_settings_clicked = st.button("保存高级设置", use_container_width=True)
+        if save_advanced_settings_clicked:
+            try:
+                config_manager.save_mapping(current_advanced_draft)
+            except ConfigError as exc:
+                st.error(f"高级设置保存失败: {exc}")
+            else:
+                st.session_state[SESSION_ADVANCED_SETTINGS_NOTICE] = (
+                    "高级设置已保存到配置文件"
+                )
+                st.rerun()
+
+    runtime_overrides.update(current_advanced_draft)
 
     default_user_prompt = ""
     if app_mode != AppMode.DURATION_CHECK:
