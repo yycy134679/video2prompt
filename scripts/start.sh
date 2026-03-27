@@ -19,5 +19,8 @@ if [ ! -f ".env" ]; then
   exit 1
 fi
 
+DEFAULT_STREAMLIT_PORT="8512"
+STREAMLIT_PORT="${VIDEO2PROMPT_STREAMLIT_PORT:-${PORT:-$DEFAULT_STREAMLIT_PORT}}"
+
 export PYTHONPATH="$ROOT_DIR/src:${PYTHONPATH:-}"
-python3 -m streamlit run app.py --server.headless=false
+python3 -m streamlit run app.py --server.headless=false --server.port "$STREAMLIT_PORT"

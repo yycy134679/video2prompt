@@ -17,7 +17,7 @@ from streamlit.web.bootstrap import load_config_options, run as streamlit_bootst
 
 from video2prompt.runtime_paths import RuntimePaths, build_runtime_paths
 
-APP_PORT = 8501
+APP_PORT = 8512
 APP_PORT_SEARCH_LIMIT = 10
 APP_NAME = "video2prompt"
 

@@ -58,6 +58,16 @@ def test_build_runtime_env_sets_fixed_streamlit_port(tmp_path: Path) -> None:
     assert env["VIDEO2PROMPT_STREAMLIT_PORT"] == "8510"
 
 
+def test_desktop_entry_defaults_to_port_8512() -> None:
+    assert APP_PORT == 8512
+
+
+def test_build_streamlit_flag_options_uses_8512_by_default(monkeypatch) -> None:
+    monkeypatch.delenv("VIDEO2PROMPT_STREAMLIT_PORT", raising=False)
+
+    assert build_streamlit_flag_options()["server.port"] == 8512
+
+
 def test_build_streamlit_flag_options_disables_dev_mode_and_pins_port() -> None:
     assert build_streamlit_flag_options(port=8510) == {
         "server.port": 8510,
