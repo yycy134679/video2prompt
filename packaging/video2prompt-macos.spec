@@ -3,14 +3,22 @@
 import glob
 import os
 
-from PyInstaller.utils.hooks import collect_data_files, collect_submodules, copy_metadata
+from PyInstaller.utils.hooks import (
+    collect_data_files,
+    collect_submodules,
+    copy_metadata,
+    is_module_or_submodule,
+)
 
 
 SPEC_DIR = os.path.abspath(globals().get("SPECPATH", os.getcwd()))
 ROOT_DIR = os.path.dirname(SPEC_DIR)
 
 
-streamlit_hiddenimports = collect_submodules("streamlit")
+streamlit_hiddenimports = collect_submodules(
+    "streamlit",
+    filter=lambda name: not is_module_or_submodule(name, "streamlit.testing"),
+)
 app_hiddenimports = collect_submodules("video2prompt")
 streamlit_datas = collect_data_files("streamlit")
 streamlit_metadata = copy_metadata("streamlit")
@@ -41,7 +49,7 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[],
+    excludes=["pytest", "_pytest"],
     noarchive=False,
 )
 

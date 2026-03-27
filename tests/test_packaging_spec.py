@@ -12,6 +12,20 @@ def test_spec_collects_streamlit_metadata() -> None:
     assert 'copy_metadata("streamlit")' in text
 
 
+def test_spec_filters_out_streamlit_testing_modules() -> None:
+    text = SPEC_PATH.read_text(encoding="utf-8")
+
+    assert 'collect_submodules(' in text
+    assert '"streamlit",' in text
+    assert 'is_module_or_submodule(name, "streamlit.testing")' in text
+
+
+def test_spec_excludes_pytest_from_production_bundle() -> None:
+    text = SPEC_PATH.read_text(encoding="utf-8")
+
+    assert 'excludes=["pytest", "_pytest"]' in text
+
+
 def test_spec_uses_onedir_collect_layout() -> None:
     text = SPEC_PATH.read_text(encoding="utf-8")
 
