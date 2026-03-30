@@ -23,7 +23,16 @@ def test_spec_filters_out_streamlit_testing_modules() -> None:
 def test_spec_excludes_pytest_from_production_bundle() -> None:
     text = SPEC_PATH.read_text(encoding="utf-8")
 
-    assert 'excludes=["pytest", "_pytest"]' in text
+    assert "excludes=[" in text
+    assert '"pytest"' in text
+    assert '"_pytest"' in text
+
+
+def test_spec_excludes_pandas_testing_modules_from_production_bundle() -> None:
+    text = SPEC_PATH.read_text(encoding="utf-8")
+
+    assert '"pandas.testing"' in text
+    assert '"pandas._testing"' in text
 
 
 def test_spec_uses_onedir_collect_layout() -> None:

@@ -342,3 +342,31 @@ def test_cancel_event_stops_waiting_parsing_and_interpreting_tasks() -> None:
     assert task_interpreting.state == TaskState.CANCELLED
     assert task_parsing.state == TaskState.CANCELLED
     assert task_waiting.state == TaskState.CANCELLED
+
+
+def test_run_single_task_reuses_execute_task_with_single_slot(monkeypatch) -> None:  # noqa: ANN001
+    scheduler = _make_scheduler(
+        _TimedParser(),
+        _base_config(concurrency=3, cooldown_seconds=0.0, parser_backoff=[1]),
+    )
+    task = Task(pid="1", original_link="a")
+    captured: dict[str, object] = {}
+
+    async def _fake_execute_task(task_arg, semaphore, on_update=None, cancel_event=None):  # noqa: ANN001, ANN202
+        captured["task"] = task_arg
+        captured["semaphore"] = semaphore
+        captured["cancel_event"] = cancel_event
+        captured["on_update"] = on_update
+        return None
+
+    monkeypatch.setattr(scheduler, "execute_task", _fake_execute_task)
+    cancel_event = asyncio.Event()
+
+    async def _run() -> None:
+        await scheduler.run_single_task(task, cancel_event=cancel_event)
+
+    asyncio.run(_run())
+
+    assert captured["task"] is task
+    assert isinstance(captured["semaphore"], asyncio.Semaphore)
+    assert captured["cancel_event"] is cancel_event

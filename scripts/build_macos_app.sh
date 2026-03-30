@@ -49,6 +49,10 @@ fi
 
 rm -rf "$BUILD_DIR" "$DIST_DIR"
 "$PYTHON_BIN" -m PyInstaller "$SPEC_FILE" --noconfirm
+PYTHONPATH=src "$PYTHON_BIN" scripts/check_packaged_modules.py \
+  "build/video2prompt-macos/PYZ-00.toc" \
+  "build/video2prompt-macos/xref-video2prompt-macos.html" \
+  "build/video2prompt-macos/warn-video2prompt-macos.txt"
 
 if [ ! -d "$DIST_DIR/$APP_BUNDLE_NAME" ]; then
   echo "构建失败，未生成 $DIST_DIR/$APP_BUNDLE_NAME" >&2
@@ -56,6 +60,13 @@ if [ ! -d "$DIST_DIR/$APP_BUNDLE_NAME" ]; then
 fi
 
 ditto -c -k --sequesterRsrc --keepParent "$DIST_DIR/$APP_BUNDLE_NAME" "$DIST_DIR/$ZIP_NAME"
+PYTHONPATH=src "$PYTHON_BIN" scripts/check_packaged_modules.py \
+  "build/video2prompt-macos/PYZ-00.toc" \
+  "build/video2prompt-macos/xref-video2prompt-macos.html"
+
+if [ "${VIDEO2PROMPT_RUN_SMOKE_TEST:-0}" = "1" ]; then
+  PYTHONPATH=src "$PYTHON_BIN" scripts/smoke_test_macos_app.py "dist/视频分析.app"
+fi
 
 echo "构建完成: $DIST_DIR/$APP_BUNDLE_NAME"
 echo "分发包: $DIST_DIR/$ZIP_NAME"

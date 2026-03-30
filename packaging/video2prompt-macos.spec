@@ -49,7 +49,7 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=["pytest", "_pytest"],
+    excludes=["pytest", "_pytest", "pandas.testing", "pandas._testing"],
     noarchive=False,
 )
 

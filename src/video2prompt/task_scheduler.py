@@ -27,6 +27,7 @@ from .logging_utils import build_model_log_extra
 from .models import AppConfig, ParseResult, Task, TaskState
 from .parser_client import ParserClient
 from .review_result import extract_can_translate, split_review_columns
+from .task_worker_pool import TaskWorkerPool
 from .video_analysis_client import VideoAnalysisClient
 from .volcengine_files_client import VolcengineFilesClient
 from .volcengine_responses_client import VolcengineResponsesClient
@@ -95,15 +96,43 @@ class TaskScheduler:
             cancel_event = asyncio.Event()
 
         try:
-            semaphore = asyncio.Semaphore(self.config.parser.concurrency)
-            coros = [self.execute_task(task, semaphore, on_update=on_update, cancel_event=cancel_event) for task in tasks]
-            await asyncio.gather(*coros)
+            parser_semaphore = asyncio.Semaphore(self.config.parser.concurrency)
+            pool = TaskWorkerPool(
+                max_workers=max(2, self.config.parser.concurrency + 1)
+            )
+
+            async def _run_one(task: Task) -> Task:
+                await self.run_single_task(
+                    task,
+                    parser_semaphore=parser_semaphore,
+                    on_update=on_update,
+                    cancel_event=cancel_event,
+                )
+                return task
+
+            await pool.run(items=tasks, worker=_run_one, cancel_event=cancel_event)
         except asyncio.CancelledError:
             if not cancel_event.is_set():
                 raise
         finally:
             if cancel_event.is_set():
                 self._mark_cancelled(tasks, on_update)
+
+    async def run_single_task(
+        self,
+        task: Task,
+        *,
+        parser_semaphore: asyncio.Semaphore | None = None,
+        on_update: TaskCallback | None = None,
+        cancel_event: asyncio.Event | None = None,
+    ) -> None:
+        semaphore = parser_semaphore or asyncio.Semaphore(1)
+        await self.execute_task(
+            task,
+            semaphore,
+            on_update=on_update,
+            cancel_event=cancel_event,
+        )
 
     async def execute_task(
         self,

@@ -9,6 +9,7 @@ import hashlib
 import os
 import sys
 import threading
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping, MutableMapping
@@ -30,6 +31,7 @@ def _ensure_local_src_on_path() -> None:
 
 _ensure_local_src_on_path()
 
+from video2prompt.app_diagnostics import build_diagnostics_report
 from video2prompt.cache_store import CacheStore
 from video2prompt.circuit_breaker import CircuitBreaker
 from video2prompt.config import ConfigManager
@@ -39,14 +41,20 @@ from video2prompt.errors import ConfigError
 from video2prompt.excel_exporter import ExcelExporter
 from video2prompt.logging_utils import setup_logging
 from video2prompt.markdown_exporter import MarkdownExporter
-from video2prompt.models import AppMode, Task, TaskInput
+from video2prompt.models import AppMode, Task, TaskInput, TaskState
 from video2prompt.parser_client import (
     COOKIE_REQUIRED_MESSAGE,
     COOKIE_RETRY_HINT,
     ParserClient,
 )
 from video2prompt.review_result import DEFAULT_REVIEW_PROMPT
+from video2prompt.run_export_payload import filter_exportable_tasks
+from video2prompt.run_snapshot_store import RunSnapshotStore
+from video2prompt.run_status import RunPhase, RunStatus
+from video2prompt.runtime_refresh import RuntimeRefreshGate
+from video2prompt.runtime_preflight import PreflightIssue, run_runtime_preflight
 from video2prompt.runtime_paths import RuntimePaths
+from video2prompt.runtime_summary import RuntimeSummary, build_runtime_summary
 from video2prompt.task_scheduler import TaskScheduler
 from video2prompt.user_state_store import UserStateStore
 from video2prompt.validator import InputValidator
@@ -89,6 +97,12 @@ SESSION_VIDEO_PROMPT_OUTPUT_FORMAT = "video_prompt_output_format"
 SESSION_PROMPT_EDITOR_MODE = "prompt_editor_mode"
 SESSION_PROMPT_EDITOR_REFRESH_MODE = "prompt_editor_refresh_mode"
 SESSION_PROMPT_NOTICE = "prompt_notice"
+SESSION_LAST_RUN_SNAPSHOT_PATH = "last_run_snapshot_path"
+SESSION_RUNTIME_VIEW_MODE = "runtime_view_mode"
+SESSION_RUNTIME_REFRESH_GATE = "runtime_refresh_gate"
+SESSION_PID_TEXT_INPUT = "pid_text_input"
+SESSION_LINK_TEXT_INPUT = "link_text_input"
+SESSION_CATEGORY_TEXT_INPUT = "category_text_input"
 SETTING_VIDEO_PROMPT = "prompt.video_prompt"
 SETTING_CATEGORY_ANALYSIS_PROMPT = "prompt.category_analysis"
 SETTING_TRANSLATION_COMPLIANCE_PROMPT = "prompt.translation_compliance"
@@ -114,6 +128,7 @@ class RunController:
     cancel_event: asyncio.Event | None = None
     thread: threading.Thread | None = None
     lock: threading.Lock = field(default_factory=threading.Lock)
+    status: RunStatus = field(default_factory=RunStatus)
 
 
 @dataclass(frozen=True)
@@ -140,6 +155,14 @@ class RuntimeFiles:
     category_prompt_template_path: Path
     translation_template_path: Path
     excel_template_path: Path
+
+
+@dataclass(frozen=True)
+class RuntimePanelPayload:
+    view_mode: str
+    total_tasks: int
+    visible_tasks: list[Task]
+    summary: RuntimeSummary
 
 
 def resolve_runtime_files(environ: Mapping[str, str] | None = None) -> RuntimeFiles:
@@ -239,6 +262,31 @@ def build_duration_runner(
         logger=logger,
         ffprobe_path=str(runtime_files.ffprobe_path),
     )
+
+
+def resolve_runtime_preflight_issues(
+    app_mode: AppMode,
+    runtime_files: RuntimeFiles,
+    *,
+    cache_db_path: Path,
+    api_key: str,
+) -> list[PreflightIssue]:
+    issues = run_runtime_preflight(
+        cache_db_path=cache_db_path,
+        exports_dir=runtime_files.exports_dir,
+        ffprobe_path=runtime_files.ffprobe_path,
+        has_api_key=app_mode == AppMode.DURATION_CHECK or bool(api_key.strip()),
+    )
+    if app_mode != AppMode.DURATION_CHECK:
+        return issues
+
+    normalized: list[PreflightIssue] = []
+    for issue in issues:
+        if issue.code == "ffprobe_missing":
+            normalized.append(PreflightIssue(issue.code, issue.message, True))
+            continue
+        normalized.append(issue)
+    return normalized
 
 
 def resolve_runtime_api_key(environ: Mapping[str, str] | None = None) -> str:
@@ -615,14 +663,22 @@ def _rows(
 def _render_table(
     table_placeholder, tasks: list[Task], show_category: bool, show_duration: bool
 ) -> None:
-    table_placeholder.dataframe(
-        _rows(tasks, show_category=show_category, show_duration=show_duration),
-        width="stretch",
-        column_config={
-            "原始链接": st.column_config.LinkColumn("原始链接"),
-            "视频直链": st.column_config.LinkColumn("视频直链"),
-        },
-    )
+    rows = _rows(tasks, show_category=show_category, show_duration=show_duration)
+    try:
+        table_placeholder.dataframe(
+            rows,
+            width="stretch",
+            column_config={
+                "原始链接": st.column_config.LinkColumn("原始链接"),
+                "视频直链": st.column_config.LinkColumn("视频直链"),
+            },
+        )
+    except AttributeError as exc:
+        if "pandas" not in str(exc):
+            raise
+        if hasattr(table_placeholder, "warning"):
+            table_placeholder.warning("表格渲染失败，已降级为 JSON 视图")
+        table_placeholder.json(rows, expanded=False)
 
 
 def _count_lines(text: str) -> tuple[int, int]:
@@ -776,6 +832,20 @@ def _persist_completed_run_snapshot(
     state[SESSION_LAST_RUN_FINISHED] = controller.finished
     state[SESSION_LAST_RUN_CANCELLED] = controller.cancelled or controller.stop_requested
     state[SESSION_LAST_RUN_ERROR_MESSAGE] = controller.error_message
+    snapshot_path = state.get(SESSION_LAST_RUN_SNAPSHOT_PATH)
+    if isinstance(snapshot_path, str) and snapshot_path:
+        RunSnapshotStore(Path(snapshot_path)).save(state["last_tasks"])
+
+
+def _restore_tasks_to_inputs(
+    tasks: list[Task],
+    session_state: MutableMapping[str, Any] | None = None,
+) -> None:
+    state = st.session_state if session_state is None else session_state
+    state[SESSION_PID_TEXT_INPUT] = "\n".join(task.pid for task in tasks)
+    state[SESSION_LINK_TEXT_INPUT] = "\n".join(task.original_link for task in tasks)
+    if any(task.category for task in tasks):
+        state[SESSION_CATEGORY_TEXT_INPUT] = "\n".join(task.category for task in tasks)
 
 
 def _sync_run_controller_state(
@@ -786,11 +856,42 @@ def _sync_run_controller_state(
         return False
     if controller.thread.is_alive():
         return False
+    completed_tasks = 0
+    failed_tasks = 0
+    cancelled_tasks = 0
+    for task in controller.tasks:
+        if task.state == TaskState.COMPLETED:
+            completed_tasks += 1
+        elif task.state in {TaskState.FAILED, TaskState.CIRCUIT_BREAK}:
+            failed_tasks += 1
+        elif task.state == TaskState.CANCELLED:
+            cancelled_tasks += 1
     with controller.lock:
         controller.running = False
         controller.finished = True
         controller.loop = None
         controller.cancel_event = None
+        if controller.error_message:
+            controller.status = controller.status.mark_failed(
+                completed_tasks=completed_tasks,
+                failed_tasks=failed_tasks,
+                cancelled_tasks=cancelled_tasks,
+                active_tasks=0,
+            )
+        elif controller.cancelled or controller.stop_requested:
+            controller.status = controller.status.mark_stopped(
+                completed_tasks=completed_tasks,
+                failed_tasks=failed_tasks,
+                cancelled_tasks=cancelled_tasks,
+                active_tasks=0,
+            )
+        else:
+            controller.status = controller.status.mark_completed(
+                completed_tasks=completed_tasks,
+                failed_tasks=failed_tasks,
+                cancelled_tasks=cancelled_tasks,
+                active_tasks=0,
+            )
     _persist_completed_run_snapshot(controller, session_state)
     _clear_run_controller(session_state)
     return True
@@ -801,12 +902,19 @@ def _is_run_active(controller: RunController | None) -> bool:
         return False
     _sync_run_controller_state(controller)
     with controller.lock:
-        return bool(controller.running)
+        return controller.status.phase in {
+            RunPhase.STARTING,
+            RunPhase.RUNNING,
+            RunPhase.STOPPING,
+        }
 
 
 def _request_stop(controller: RunController) -> None:
     with controller.lock:
         controller.stop_requested = True
+        controller.status = controller.status.mark_stopping(
+            active_tasks=controller.status.active_tasks
+        )
         loop = controller.loop
         cancel_event = controller.cancel_event
     if loop is not None and cancel_event is not None and not cancel_event.is_set():
@@ -834,6 +942,67 @@ def _resolve_completed_run_feedback(
     return None
 
 
+def _render_run_status_summary(controller: RunController) -> None:
+    completed_tasks = 0
+    failed_tasks = 0
+    cancelled_tasks = 0
+    active_tasks = 0
+    for task in controller.tasks:
+        if task.state == TaskState.COMPLETED:
+            completed_tasks += 1
+        elif task.state in {TaskState.FAILED, TaskState.CIRCUIT_BREAK}:
+            failed_tasks += 1
+        elif task.state == TaskState.CANCELLED:
+            cancelled_tasks += 1
+        elif task.state in {
+            TaskState.PARSING,
+            TaskState.DURATION_CHECKING,
+            TaskState.INTERVAL,
+            TaskState.INTERPRETING,
+        }:
+            active_tasks += 1
+
+    with controller.lock:
+        phase = controller.status.phase
+        total_tasks = controller.status.total_tasks or len(controller.tasks)
+
+    phase_label = {
+        RunPhase.IDLE: "空闲",
+        RunPhase.STARTING: "启动中",
+        RunPhase.RUNNING: "运行中",
+        RunPhase.STOPPING: "停止中",
+        RunPhase.STOPPED: "已停止",
+        RunPhase.COMPLETED: "已完成",
+        RunPhase.FAILED: "失败",
+    }[phase]
+
+    total_col, phase_col, active_col, completed_col = st.columns(4)
+    total_col.metric("总任务数", total_tasks)
+    phase_col.metric("当前状态", phase_label)
+    active_col.metric("活动任务", active_tasks)
+    completed_col.metric("已完成", completed_tasks)
+
+    failed_col, cancelled_col = st.columns(2)
+    failed_col.metric("失败", failed_tasks)
+    cancelled_col.metric("已取消", cancelled_tasks)
+
+
+def _build_runtime_panel_payload(
+    tasks: list[Task], *, view_mode: str
+) -> RuntimePanelPayload:
+    normalized_view_mode = view_mode if view_mode in {"light", "full"} else "light"
+    summary = build_runtime_summary(tasks, limit_recent=20, limit_failures=20)
+    visible_tasks = (
+        summary.recent_updates if normalized_view_mode == "light" else list(tasks)
+    )
+    return RuntimePanelPayload(
+        view_mode=normalized_view_mode,
+        total_tasks=summary.total_tasks,
+        visible_tasks=visible_tasks,
+        summary=summary,
+    )
+
+
 def _scheduler_thread_entry(
     controller: RunController,
     config,
@@ -852,9 +1021,14 @@ def _scheduler_thread_entry(
         controller.running = True
         controller.finished = False
         controller.error_message = ""
+        controller.status = controller.status.mark_running(active_tasks=0)
 
     if controller.stop_requested:
         cancel_event.set()
+        with controller.lock:
+            controller.status = controller.status.mark_stopping(
+                active_tasks=controller.status.active_tasks
+            )
 
     try:
         loop.run_until_complete(
@@ -906,9 +1080,14 @@ def _duration_checker_thread_entry(
         controller.running = True
         controller.finished = False
         controller.error_message = ""
+        controller.status = controller.status.mark_running(active_tasks=0)
 
     if controller.stop_requested:
         cancel_event.set()
+        with controller.lock:
+            controller.status = controller.status.mark_stopping(
+                active_tasks=controller.status.active_tasks
+            )
 
     try:
         loop.run_until_complete(
@@ -986,13 +1165,49 @@ def _render_runtime_panel(controller: RunController | None) -> None:
             show_category = last_mode == AppMode.CATEGORY_ANALYSIS
             show_duration = last_mode == AppMode.DURATION_CHECK
 
+        if current_controller is not None:
+            _render_run_status_summary(current_controller)
+        else:
+            st.session_state.pop(SESSION_RUNTIME_REFRESH_GATE, None)
+
         if tasks_to_render:
-            _render_table(
-                st,
-                tasks_to_render,
-                show_category=show_category,
-                show_duration=show_duration,
+            view_mode = st.radio(
+                "运行视图",
+                options=["light", "full"],
+                format_func=lambda value: "轻量视图" if value == "light" else "全量视图",
+                horizontal=True,
+                key=SESSION_RUNTIME_VIEW_MODE,
             )
+            payload = _build_runtime_panel_payload(tasks_to_render, view_mode=view_mode)
+
+            if payload.view_mode == "light":
+                st.caption("轻量视图默认仅展示最近更新任务，避免一次性渲染全量大表")
+
+            if payload.summary.error_summary:
+                st.caption("最近高频错误")
+                for item in payload.summary.error_summary[:5]:
+                    st.write(f"- {item.message} ({item.count})")
+
+            should_render_table = True
+            if current_controller is not None and payload.view_mode == "full":
+                gate = st.session_state.get(SESSION_RUNTIME_REFRESH_GATE)
+                if not isinstance(gate, RuntimeRefreshGate):
+                    gate = RuntimeRefreshGate(min_interval_seconds=1.0)
+                    st.session_state[SESSION_RUNTIME_REFRESH_GATE] = gate
+                should_render_table = gate.should_refresh(
+                    now=time.monotonic(),
+                    stopping=current_controller.status.phase == RunPhase.STOPPING,
+                )
+                if not should_render_table:
+                    st.caption("全量视图节流中，稍后自动刷新")
+
+            if should_render_table:
+                _render_table(
+                    st,
+                    payload.visible_tasks,
+                    show_category=show_category,
+                    show_duration=show_duration,
+                )
 
         if current_controller is None:
             feedback = _resolve_completed_run_feedback()
@@ -1188,6 +1403,9 @@ def main() -> None:
     st.set_page_config(page_title="video2prompt", layout="wide")
     st.title("video2prompt - 批量视频解读")
     runtime_files = resolve_runtime_files()
+    st.session_state[SESSION_LAST_RUN_SNAPSHOT_PATH] = str(
+        runtime_files.exports_dir / "last_run_result.json"
+    )
 
     try:
         config_manager = build_config_manager(use_runtime_paths=True)
@@ -1205,6 +1423,18 @@ def main() -> None:
 
     cache = CacheStore(base_config.cache.db_path)
     asyncio.run(cache.init_db())
+
+    with st.expander("运行诊断"):
+        report = build_diagnostics_report(
+            app_version="dev",
+            port=int(os.environ.get("VIDEO2PROMPT_STREAMLIT_PORT", "8512")),
+            config_path=runtime_files.config_path,
+            cache_db_path=Path(base_config.cache.db_path),
+            log_path=Path(base_config.logging.file_path),
+            last_error_message=str(st.session_state.get(SESSION_LAST_RUN_ERROR_MESSAGE, "")),
+        )
+        st.code(report)
+        st.text_area("复制诊断信息", value=report, height=180)
 
     video_prompt_template = load_prompt_template(runtime_files.video_prompt_template_path, "")
     category_prompt_template = load_prompt_template(
@@ -1464,28 +1694,57 @@ def main() -> None:
         pass
 
     category_text = ""
+    snapshot_store = RunSnapshotStore(runtime_files.exports_dir / "last_run_result.json")
+    if st.button("恢复上次未完成任务"):
+        remaining_tasks = snapshot_store.load_remaining_tasks()
+        if remaining_tasks:
+            _restore_tasks_to_inputs(remaining_tasks)
+            st.rerun()
+        else:
+            st.info("没有可恢复的未完成任务")
+
     if app_mode == AppMode.CATEGORY_ANALYSIS:
         pid_col, link_col, category_col = st.columns(3)
         with pid_col:
-            pid_text = st.text_area("pid 列表（每行一个）", height=220)
+            pid_text = st.text_area(
+                "pid 列表（每行一个）",
+                height=220,
+                key=SESSION_PID_TEXT_INPUT,
+            )
             pid_total, pid_non_empty = _count_lines(pid_text)
             st.caption(f"行数：{pid_total}（非空行：{pid_non_empty}）")
         with link_col:
-            link_text = st.text_area("抖音链接列表（每行一个）", height=220)
+            link_text = st.text_area(
+                "抖音链接列表（每行一个）",
+                height=220,
+                key=SESSION_LINK_TEXT_INPUT,
+            )
             link_total, link_non_empty = _count_lines(link_text)
             st.caption(f"行数：{link_total}（非空行：{link_non_empty}）")
         with category_col:
-            category_text = st.text_area("类目列表（每行一个）", height=220)
+            category_text = st.text_area(
+                "类目列表（每行一个）",
+                height=220,
+                key=SESSION_CATEGORY_TEXT_INPUT,
+            )
             category_total, category_non_empty = _count_lines(category_text)
             st.caption(f"行数：{category_total}（非空行：{category_non_empty}）")
     else:
         left, right = st.columns(2)
         with left:
-            pid_text = st.text_area("pid 列表（每行一个）", height=220)
+            pid_text = st.text_area(
+                "pid 列表（每行一个）",
+                height=220,
+                key=SESSION_PID_TEXT_INPUT,
+            )
             pid_total, pid_non_empty = _count_lines(pid_text)
             st.caption(f"行数：{pid_total}（非空行：{pid_non_empty}）")
         with right:
-            link_text = st.text_area("抖音链接列表（每行一个）", height=220)
+            link_text = st.text_area(
+                "抖音链接列表（每行一个）",
+                height=220,
+                key=SESSION_LINK_TEXT_INPUT,
+            )
             link_total, link_non_empty = _count_lines(link_text)
             st.caption(f"行数：{link_total}（非空行：{link_non_empty}）")
 
@@ -1556,6 +1815,24 @@ def main() -> None:
             api_key=str(st.session_state.get("volcengine_api_key_input", "")).strip(),
             model=str(st.session_state.get("volcengine_model_input", "")).strip(),
         )
+        preflight_issues = resolve_runtime_preflight_issues(
+            app_mode,
+            runtime_files,
+            cache_db_path=Path(base_config.cache.db_path),
+            api_key=runtime_ai_settings.api_key,
+        )
+        blocking_preflight_issues = [
+            issue for issue in preflight_issues if issue.blocking
+        ]
+        if blocking_preflight_issues:
+            for issue in blocking_preflight_issues:
+                st.error(issue.message)
+            st.stop()
+
+        for issue in preflight_issues:
+            if not issue.blocking:
+                st.warning(issue.message)
+
         ai_settings_error = validate_runtime_ai_settings(
             app_mode,
             api_key=runtime_ai_settings.api_key,
@@ -1596,6 +1873,7 @@ def main() -> None:
             running=True,
             finished=False,
             stop_requested=False,
+            status=RunStatus().mark_starting(total_tasks=len(tasks)),
         )
         if app_mode == AppMode.DURATION_CHECK:
             worker = threading.Thread(
@@ -1638,6 +1916,11 @@ def main() -> None:
     if st.session_state.get("last_tasks") and not _is_run_active(run_controller):
         restore_tasks = st.session_state["last_tasks"]
         last_mode = _resolve_last_mode()
+        allow_partial_export = bool(st.session_state.get(SESSION_LAST_RUN_CANCELLED, False))
+        export_tasks = filter_exportable_tasks(
+            restore_tasks,
+            allow_partial=allow_partial_export,
+        )
 
         is_category_mode = last_mode == AppMode.CATEGORY_ANALYSIS
         is_duration_mode = last_mode == AppMode.DURATION_CHECK
@@ -1648,13 +1931,20 @@ def main() -> None:
             st.session_state[SESSION_DURATION_LONG_FAILED_DOWNLOAD] = None
 
         st.subheader("导出结果")
+        if allow_partial_export and export_tasks:
+            st.info(f"已完成 {len(export_tasks)} 条，可导出部分结果")
+        elif allow_partial_export:
+            st.warning("当前没有已完成任务可导出")
         if is_duration_mode:
             short_col, long_failed_col, tip_col = st.columns([1, 1, 3])
             with tip_col:
                 st.info("时长判断模式会生成两份 Excel：<=15s 与 >15s/探测失败")
 
             with short_col:
-                export_duration_clicked = st.button("导出时长结果（双文件）")
+                export_duration_clicked = st.button(
+                    "导出时长结果（双文件）",
+                    disabled=allow_partial_export and not export_tasks,
+                )
 
             if export_duration_clicked:
                 exporter = DurationExcelExporter()
@@ -1663,7 +1953,7 @@ def main() -> None:
                 short_file = output_dir / short_name
                 long_failed_file = output_dir / long_failed_name
                 exporter.export_dual(
-                    tasks=restore_tasks,
+                    tasks=export_tasks,
                     short_output_path=str(short_file),
                     long_failed_output_path=str(long_failed_file),
                 )
@@ -1720,16 +2010,22 @@ def main() -> None:
                 )
 
             with excel_col:
-                export_excel_clicked = st.button("导出 Excel")
+                export_excel_clicked = st.button(
+                    "导出 Excel",
+                    disabled=allow_partial_export and not export_tasks,
+                )
             with markdown_col:
-                export_markdown_clicked = st.button("导出 Markdown（按类目）")
+                export_markdown_clicked = st.button(
+                    "导出 Markdown（按类目）",
+                    disabled=allow_partial_export and not export_tasks,
+                )
 
             if export_excel_clicked:
                 exporter = build_excel_exporter(runtime_files)
                 output_dir = ensure_exports_dir(runtime_files)
                 output_file = output_dir / ExcelExporter.generate_filename()
                 exporter.export(
-                    tasks=restore_tasks,
+                    tasks=export_tasks,
                     output_path=str(output_file),
                     include_category=True,
                 )
@@ -1743,7 +2039,7 @@ def main() -> None:
             if export_markdown_clicked:
                 markdown_exporter = MarkdownExporter(output_root=str(ensure_exports_dir(runtime_files)))
                 try:
-                    result = markdown_exporter.export_by_category(tasks=restore_tasks)
+                    result = markdown_exporter.export_by_category(tasks=export_tasks)
                 except ValueError as exc:
                     st.session_state[SESSION_MARKDOWN_DOWNLOAD] = None
                     st.warning(str(exc))
@@ -1801,14 +2097,17 @@ def main() -> None:
                 )
 
             with excel_col:
-                export_excel_clicked = st.button("导出 Excel")
+                export_excel_clicked = st.button(
+                    "导出 Excel",
+                    disabled=allow_partial_export and not export_tasks,
+                )
 
             if export_excel_clicked:
                 exporter = build_excel_exporter(runtime_files)
                 output_dir = ensure_exports_dir(runtime_files)
                 output_file = output_dir / ExcelExporter.generate_filename()
                 exporter.export(
-                    tasks=restore_tasks,
+                    tasks=export_tasks,
                     output_path=str(output_file),
                     include_category=False,
                 )

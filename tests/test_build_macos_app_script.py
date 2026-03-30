@@ -37,3 +37,23 @@ def test_build_script_exports_src_pythonpath_before_module_invocation() -> None:
     text = SCRIPT_PATH.read_text(encoding="utf-8")
 
     assert 'export PYTHONPATH="$ROOT_DIR/src:${PYTHONPATH:-}"' in text
+
+
+def test_build_script_runs_packaged_module_guard_after_pyinstaller() -> None:
+    text = SCRIPT_PATH.read_text(encoding="utf-8")
+
+    assert 'scripts/check_packaged_modules.py' in text
+    assert 'build/video2prompt-macos/warn-video2prompt-macos.txt' in text
+
+
+def test_build_script_runs_packaged_module_guard_after_zip() -> None:
+    text = SCRIPT_PATH.read_text(encoding="utf-8")
+
+    assert text.count('scripts/check_packaged_modules.py') == 2
+
+
+def test_build_script_supports_optional_smoke_test() -> None:
+    text = SCRIPT_PATH.read_text(encoding="utf-8")
+
+    assert 'VIDEO2PROMPT_RUN_SMOKE_TEST' in text
+    assert 'scripts/smoke_test_macos_app.py' in text

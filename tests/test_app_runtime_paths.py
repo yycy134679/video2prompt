@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import app
+from video2prompt.models import AppMode
 
 
 def test_resolve_runtime_files_prefers_environment_paths(tmp_path: Path) -> None:
@@ -219,3 +220,87 @@ def test_build_duration_runner_passes_runtime_ffprobe_path(monkeypatch, tmp_path
     app.build_duration_runner(parser, config, logger, runtime_files)
 
     assert captured["ffprobe_path"] == str(runtime_files.ffprobe_path)
+
+
+def test_resolve_runtime_preflight_issues_skips_api_key_for_duration_mode(
+    tmp_path: Path,
+) -> None:
+    ffprobe_path = tmp_path / "bundle" / "bin" / "ffprobe"
+    ffprobe_path.parent.mkdir(parents=True, exist_ok=True)
+    ffprobe_path.write_text("binary", encoding="utf-8")
+    runtime_files = app.RuntimeFiles(
+        resource_root=tmp_path / "bundle",
+        app_support_dir=tmp_path / "support",
+        env_path=tmp_path / "support" / ".env",
+        config_path=tmp_path / "support" / "config.yaml",
+        exports_dir=tmp_path / "support" / "exports",
+        ffprobe_path=ffprobe_path,
+        video_prompt_template_path=tmp_path / "bundle" / "docs" / "视频复刻提示词.md",
+        category_prompt_template_path=tmp_path / "bundle" / "docs" / "视频脚本拆解分析.md",
+        translation_template_path=tmp_path / "bundle" / "docs" / "视频内容审查.md",
+        excel_template_path=tmp_path / "bundle" / "docs" / "product_prompt_template.xlsx",
+    )
+
+    issues = app.resolve_runtime_preflight_issues(
+        AppMode.DURATION_CHECK,
+        runtime_files,
+        cache_db_path=tmp_path / "support" / "data" / "cache.db",
+        api_key="",
+    )
+
+    assert [issue.code for issue in issues] == []
+
+
+def test_resolve_runtime_preflight_issues_flags_missing_api_key_for_ai_mode(
+    tmp_path: Path,
+) -> None:
+    ffprobe_path = tmp_path / "bundle" / "bin" / "ffprobe"
+    ffprobe_path.parent.mkdir(parents=True, exist_ok=True)
+    ffprobe_path.write_text("binary", encoding="utf-8")
+    runtime_files = app.RuntimeFiles(
+        resource_root=tmp_path / "bundle",
+        app_support_dir=tmp_path / "support",
+        env_path=tmp_path / "support" / ".env",
+        config_path=tmp_path / "support" / "config.yaml",
+        exports_dir=tmp_path / "support" / "exports",
+        ffprobe_path=ffprobe_path,
+        video_prompt_template_path=tmp_path / "bundle" / "docs" / "视频复刻提示词.md",
+        category_prompt_template_path=tmp_path / "bundle" / "docs" / "视频脚本拆解分析.md",
+        translation_template_path=tmp_path / "bundle" / "docs" / "视频内容审查.md",
+        excel_template_path=tmp_path / "bundle" / "docs" / "product_prompt_template.xlsx",
+    )
+
+    issues = app.resolve_runtime_preflight_issues(
+        AppMode.VIDEO_PROMPT,
+        runtime_files,
+        cache_db_path=tmp_path / "support" / "data" / "cache.db",
+        api_key="",
+    )
+
+    assert any(issue.code == "api_key_missing" and issue.blocking for issue in issues)
+
+
+def test_resolve_runtime_preflight_issues_blocks_missing_ffprobe_for_duration_mode(
+    tmp_path: Path,
+) -> None:
+    runtime_files = app.RuntimeFiles(
+        resource_root=tmp_path / "bundle",
+        app_support_dir=tmp_path / "support",
+        env_path=tmp_path / "support" / ".env",
+        config_path=tmp_path / "support" / "config.yaml",
+        exports_dir=tmp_path / "support" / "exports",
+        ffprobe_path=tmp_path / "bundle" / "bin" / "ffprobe",
+        video_prompt_template_path=tmp_path / "bundle" / "docs" / "视频复刻提示词.md",
+        category_prompt_template_path=tmp_path / "bundle" / "docs" / "视频脚本拆解分析.md",
+        translation_template_path=tmp_path / "bundle" / "docs" / "视频内容审查.md",
+        excel_template_path=tmp_path / "bundle" / "docs" / "product_prompt_template.xlsx",
+    )
+
+    issues = app.resolve_runtime_preflight_issues(
+        AppMode.DURATION_CHECK,
+        runtime_files,
+        cache_db_path=tmp_path / "support" / "data" / "cache.db",
+        api_key="",
+    )
+
+    assert any(issue.code == "ffprobe_missing" and issue.blocking for issue in issues)
