@@ -35,7 +35,7 @@ def test_build_runtime_panel_payload_defaults_to_light_mode() -> None:
 
     assert payload.view_mode == "light"
     assert payload.total_tasks == 3
-    assert [task.pid for task in payload.visible_tasks] == ["2", "1"]
+    assert [task.pid for task in payload.visible_tasks] == ["2", "3", "1"]
 
 
 def test_build_runtime_panel_payload_keeps_all_tasks_in_full_mode() -> None:

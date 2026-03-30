@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import threading
 from pathlib import Path
 
 import aiosqlite
@@ -111,5 +112,54 @@ async def test_cache_store_serializes_concurrent_connections(
     await asyncio.sleep(0)
     enter_gate.set()
     await asyncio.gather(first, second)
+
+    assert max_entered == 1
+
+
+def test_cache_store_serializes_connections_across_event_loops(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    store = CacheStore(db_path=str(tmp_path / "cache.db"))
+
+    entered = 0
+    max_entered = 0
+    counters_lock = threading.Lock()
+
+    class _FakeCursor:
+        async def fetchone(self):
+            return None
+
+        async def close(self) -> None:
+            return None
+
+    class _FakeConnection:
+        async def __aenter__(self):
+            nonlocal entered, max_entered
+            with counters_lock:
+                entered += 1
+                max_entered = max(max_entered, entered)
+            await asyncio.sleep(0.05)
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb) -> None:
+            nonlocal entered
+            with counters_lock:
+                entered -= 1
+
+        async def execute(self, *_args, **_kwargs):
+            return _FakeCursor()
+
+    monkeypatch.setattr(aiosqlite, "connect", lambda _path: _FakeConnection())
+
+    def _run_query() -> None:
+        asyncio.run(store.get_cached_result("a", "b"))
+
+    first = threading.Thread(target=_run_query)
+    second = threading.Thread(target=_run_query)
+    first.start()
+    second.start()
+    first.join()
+    second.join()
 
     assert max_entered == 1
