@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections import Counter
 from dataclasses import dataclass
+from datetime import datetime
 
 from .models import Task, TaskState
 
@@ -26,13 +27,18 @@ class RuntimeSummary:
     error_summary: list[ErrorSummaryItem]
 
 
+def _task_update_time(task: Task) -> datetime | None:
+    return task.end_time or task.start_time
+
+
 def build_runtime_summary(
     tasks: list[Task],
     limit_recent: int,
     limit_failures: int,
 ) -> RuntimeSummary:
     completed = sum(task.state == TaskState.COMPLETED for task in tasks)
-    failed = sum(task.state == TaskState.FAILED for task in tasks)
+    failed_states = {TaskState.FAILED, TaskState.CIRCUIT_BREAK}
+    failed = sum(task.state in failed_states for task in tasks)
     cancelled = sum(task.state == TaskState.CANCELLED for task in tasks)
     active = sum(
         task.state
@@ -45,13 +51,15 @@ def build_runtime_summary(
         for task in tasks
     )
     recent_updates = sorted(
-        [task for task in tasks if task.end_time is not None],
-        key=lambda item: item.end_time,
+        [task for task in tasks if _task_update_time(task) is not None],
+        key=lambda item: _task_update_time(item) or datetime.min,
         reverse=True,
     )[:limit_recent]
-    recent_failures = [task for task in tasks if task.state == TaskState.FAILED][
-        :limit_failures
-    ]
+    recent_failures = sorted(
+        [task for task in tasks if task.state in failed_states],
+        key=lambda item: _task_update_time(item) or datetime.min,
+        reverse=True,
+    )[:limit_failures]
     counts = Counter(task.error_message for task in tasks if task.error_message)
     error_summary = [
         ErrorSummaryItem(message=message, count=count)

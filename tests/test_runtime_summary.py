@@ -36,7 +36,7 @@ def test_build_runtime_summary_counts_states_and_recent_updates() -> None:
     assert summary.completed_tasks == 1
     assert summary.failed_tasks == 1
     assert summary.active_tasks == 1
-    assert [item.pid for item in summary.recent_updates] == ["2", "1"]
+    assert [item.pid for item in summary.recent_updates] == ["2", "3"]
 
 
 def test_build_runtime_summary_groups_common_errors() -> None:
@@ -67,3 +67,21 @@ def test_build_runtime_summary_groups_common_errors() -> None:
         ("parser timeout", 2),
         ("model rate limit", 1),
     ]
+
+
+def test_build_runtime_summary_counts_circuit_break_as_failure() -> None:
+    now = datetime.now()
+    tasks = [
+        Task(
+            pid="1",
+            original_link="a",
+            state=TaskState.CIRCUIT_BREAK,
+            error_message="breaker open",
+            end_time=now,
+        )
+    ]
+
+    summary = build_runtime_summary(tasks, limit_recent=5, limit_failures=5)
+
+    assert summary.failed_tasks == 1
+    assert [item.pid for item in summary.recent_failures] == ["1"]

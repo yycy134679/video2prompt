@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import threading
+from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
 
@@ -17,7 +19,15 @@ class CacheStore:
 
     def __init__(self, db_path: str = "data/cache.db"):
         self.db_path = db_path
-        self._connection_lock = asyncio.Lock()
+        self._connection_lock = threading.Lock()
+
+    @asynccontextmanager
+    async def _acquire_connection_lock(self):
+        await asyncio.to_thread(self._connection_lock.acquire)
+        try:
+            yield
+        finally:
+            self._connection_lock.release()
 
     async def _connect(self):
         path = Path(self.db_path)
@@ -25,7 +35,7 @@ class CacheStore:
         return aiosqlite.connect(self.db_path)
 
     async def init_db(self) -> None:
-        async with self._connection_lock:
+        async with self._acquire_connection_lock():
             async with await self._connect() as db:
                 await db.execute(
                     """
@@ -89,7 +99,7 @@ class CacheStore:
     async def get_cached_result(
         self, link_hash: str, prompt_hash: str
     ) -> CachedResult | None:
-        async with self._connection_lock:
+        async with self._acquire_connection_lock():
             async with await self._connect() as db:
                 cursor = await db.execute(
                     """
@@ -125,7 +135,7 @@ class CacheStore:
         can_translate: str,
         fps_used: float,
     ) -> None:
-        async with self._connection_lock:
+        async with self._acquire_connection_lock():
             async with await self._connect() as db:
                 await db.execute(
                     """
@@ -153,7 +163,7 @@ class CacheStore:
                 await db.commit()
 
     async def save_system_prompt(self, prompt: str) -> None:
-        async with self._connection_lock:
+        async with self._acquire_connection_lock():
             async with await self._connect() as db:
                 await db.execute(
                     """
@@ -167,7 +177,7 @@ class CacheStore:
                 await db.commit()
 
     async def load_system_prompt(self) -> str | None:
-        async with self._connection_lock:
+        async with self._acquire_connection_lock():
             async with await self._connect() as db:
                 cursor = await db.execute("SELECT content FROM system_prompt WHERE id = 1")
                 row = await cursor.fetchone()
@@ -177,7 +187,7 @@ class CacheStore:
         return str(row[0])
 
     async def save_setting(self, key: str, value: str) -> None:
-        async with self._connection_lock:
+        async with self._acquire_connection_lock():
             async with await self._connect() as db:
                 await db.execute(
                     """
@@ -191,7 +201,7 @@ class CacheStore:
                 await db.commit()
 
     async def load_setting(self, key: str) -> str | None:
-        async with self._connection_lock:
+        async with self._acquire_connection_lock():
             async with await self._connect() as db:
                 cursor = await db.execute(
                     "SELECT value FROM app_settings WHERE key = ?",

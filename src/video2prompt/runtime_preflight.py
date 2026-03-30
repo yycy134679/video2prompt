@@ -27,7 +27,7 @@ def _ensure_writable_dir(path: Path) -> bool:
 
 def _ffprobe_available(ffprobe_path: Path) -> bool:
     if ffprobe_path.exists():
-        return True
+        return ffprobe_path.is_file() and shutil.which(str(ffprobe_path)) is not None
     if len(ffprobe_path.parts) == 1:
         return shutil.which(ffprobe_path.name) is not None
     return False

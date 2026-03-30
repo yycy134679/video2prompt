@@ -13,6 +13,17 @@ def _resolve_app_executable(app_path: Path) -> Path:
     return app_path / "Contents" / "MacOS" / "video2prompt"
 
 
+def _read_url(url: str) -> tuple[int, str]:
+    with urllib.request.urlopen(url, timeout=1) as response:
+        body = response.read().decode(errors="ignore")
+        return response.status, body
+
+
+def _homepage_ready(body: str) -> bool:
+    normalized = body.lower()
+    return "streamlit" in normalized or "video2prompt" in normalized
+
+
 def wait_for_healthcheck(app_path: Path) -> bool:
     executable = _resolve_app_executable(app_path)
     port = int(os.environ.get("VIDEO2PROMPT_SMOKE_TEST_PORT", "8516"))
@@ -26,14 +37,16 @@ def wait_for_healthcheck(app_path: Path) -> bool:
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
-    url = f"http://127.0.0.1:{port}/_stcore/health"
+    healthcheck_url = f"http://127.0.0.1:{port}/_stcore/health"
+    homepage_url = f"http://127.0.0.1:{port}/"
     deadline = time.time() + 20.0
     try:
         while time.time() < deadline:
             try:
-                with urllib.request.urlopen(url, timeout=1) as response:
-                    body = response.read().decode().strip().lower()
-                    if response.status == 200 and body == "ok":
+                status, body = _read_url(healthcheck_url)
+                if status == 200 and body.strip().lower() == "ok":
+                    homepage_status, homepage_body = _read_url(homepage_url)
+                    if homepage_status == 200 and _homepage_ready(homepage_body):
                         return True
             except Exception:  # noqa: BLE001
                 time.sleep(0.5)
